@@ -1,0 +1,810 @@
+// Shop ERP — Phase 1 schema
+// Conventions:
+//  - every business table carries tenantId; all queries are scoped by it
+//  - money is stored as integer cents (LKR default)
+//  - stock quantities are never edited directly: StockBalance is maintained
+//    only by StockService together with a StockMovement row
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────── Enums ───────────────────────────────
+
+enum BusinessType {
+  PHONE
+  COMPUTER
+  REPAIR
+  MIXED
+}
+
+enum TenantStatus {
+  TRIAL
+  ACTIVE
+  PAST_DUE
+  SUSPENDED
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+}
+
+enum InvoiceStatus {
+  OPEN
+  PAID
+  VOID
+}
+
+enum DocType {
+  INVOICE
+  PAYMENT
+  REPAIR_JOB
+  STOCK_RECEIPT
+  ADJUSTMENT
+}
+
+enum TrackingType {
+  SERIAL
+  QUANTITY
+  SERVICE
+}
+
+enum UnitCondition {
+  NEW
+  OPEN_BOX
+  USED_A
+  USED_B
+  USED_C
+  REFURBISHED
+}
+
+enum StockUnitStatus {
+  IN_STOCK
+  RESERVED
+  SOLD
+  IN_REPAIR
+  RETURNED
+  WRITTEN_OFF
+}
+
+enum MovementType {
+  RECEIPT
+  SALE
+  SALE_VOID
+  ADJUSTMENT_IN
+  ADJUSTMENT_OUT
+  REPAIR_ISSUE
+  REPAIR_RETURN
+}
+
+enum CustomerType {
+  RETAIL
+  CORPORATE
+  DEALER
+}
+
+enum SaleStatus {
+  COMPLETED
+  VOIDED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  BANK_TRANSFER
+  LANKAQR
+  CHEQUE
+  LOYALTY_POINTS
+}
+
+enum PaymentStatus {
+  VALID
+  VOIDED
+}
+
+enum RepairStatus {
+  RECEIVED
+  DIAGNOSING
+  WAITING_APPROVAL
+  WAITING_PARTS
+  IN_REPAIR
+  QUALITY_CHECK
+  READY
+  REJECTED
+  NOT_REPAIRABLE
+  DELIVERED
+  CANCELLED
+}
+
+enum NotificationChannel {
+  SMS
+  WHATSAPP
+  EMAIL
+}
+
+enum NotificationStatus {
+  QUEUED
+  SENT
+  FAILED
+  SKIPPED
+}
+
+// ─────────────────────── A. Platform: tenants & plans ───────────────────────
+
+model Plan {
+  id             String         @id @default(uuid())
+  code           String         @unique // REPAIR_ONLY, POS_REPAIRS, FULL
+  name           String
+  priceCents     Int // per branch per month
+  features       String[] // module codes enabled by this plan
+  maxUsers       Int            @default(5)
+  isActive       Boolean        @default(true)
+  subscriptions  Subscription[]
+
+  @@map("plans")
+}
+
+model Tenant {
+  id           String       @id @default(uuid())
+  name         String
+  businessType BusinessType @default(MIXED)
+  phone        String?
+  email        String?
+  status       TenantStatus @default(TRIAL)
+  trialEndsAt  DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  settings      TenantSettings?
+  subscription  Subscription?
+  branches      Branch[]
+  users         User[]
+  roles         Role[]
+
+  @@map("tenants")
+}
+
+model Subscription {
+  id                 String               @id @default(uuid())
+  tenantId           String               @unique
+  tenant             Tenant               @relation(fields: [tenantId], references: [id])
+  planId             String
+  plan               Plan                 @relation(fields: [planId], references: [id])
+  status             SubscriptionStatus   @default(TRIALING)
+  branchCount        Int                  @default(1)
+  currentPeriodStart DateTime             @default(now())
+  currentPeriodEnd   DateTime
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  invoices           SubscriptionInvoice[]
+
+  @@map("subscriptions")
+}
+
+model SubscriptionInvoice {
+  id             String        @id @default(uuid())
+  tenantId       String
+  subscriptionId String
+  subscription   Subscription  @relation(fields: [subscriptionId], references: [id])
+  amountCents    Int
+  status         InvoiceStatus @default(OPEN)
+  periodStart    DateTime
+  periodEnd      DateTime
+  paidAt         DateTime?
+  paymentRef     String?
+  createdAt      DateTime      @default(now())
+
+  @@index([tenantId])
+  @@map("subscription_invoices")
+}
+
+// ─────────────────────── A. Platform: branches & settings ───────────────────────
+
+model TenantSettings {
+  id                    String  @id @default(uuid())
+  tenantId              String  @unique
+  tenant                Tenant  @relation(fields: [tenantId], references: [id])
+  currency              String  @default("LKR")
+  vatRateBp             Int     @default(1800) // basis points: 1800 = 18%
+  pricesIncludeVat      Boolean @default(true)
+  allowNegativeStock    Boolean @default(false)
+  defaultWarrantyDays   Int     @default(365)
+  repairWarrantyDays    Int     @default(30)
+  repairTerms           String  @default("Devices not collected within 60 days may be disposed of. The shop is not responsible for data loss.")
+  receiptWidthMm        Int     @default(80)
+  loyaltyEarnCentsPerPt Int     @default(10000) // 1 point per LKR 100 spent
+  loyaltyPointValueCents Int    @default(100) // 1 point = LKR 1 when redeemed
+  updatedAt             DateTime @updatedAt
+
+  @@map("tenant_settings")
+}
+
+model Branch {
+  id            String   @id @default(uuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  code          String // short code used in document numbers, e.g. TRI
+  name          String
+  address       String?
+  district      String?
+  phone         String?
+  vatNumber     String?
+  invoiceHeader String?
+  invoiceFooter String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  users         UserBranch[]
+  numberSeries  NumberSeries[]
+
+  @@unique([tenantId, code])
+  @@map("branches")
+}
+
+model NumberSeries {
+  id         String  @id @default(uuid())
+  tenantId   String
+  branchId   String
+  branch     Branch  @relation(fields: [branchId], references: [id])
+  docType    DocType
+  prefix     String // e.g. INV, PAY, JOB
+  nextNumber Int     @default(1)
+  padding    Int     @default(6)
+
+  @@unique([branchId, docType])
+  @@map("number_series")
+}
+
+// ─────────────────────── A. Platform: users & roles ───────────────────────
+
+model Role {
+  id             String           @id @default(uuid())
+  tenantId       String
+  tenant         Tenant           @relation(fields: [tenantId], references: [id])
+  name           String
+  isSystem       Boolean          @default(false)
+  allBranches    Boolean          @default(false)
+  maxDiscountBp  Int              @default(0) // max discount as basis points of line/bill value
+  maxRefundCents Int              @default(0)
+  permissions    RolePermission[]
+  users          User[]
+  createdAt      DateTime         @default(now())
+
+  @@unique([tenantId, name])
+  @@map("roles")
+}
+
+model RolePermission {
+  roleId     String
+  role       Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission String
+
+  @@id([roleId, permission])
+  @@map("role_permissions")
+}
+
+model User {
+  id           String         @id @default(uuid())
+  tenantId     String
+  tenant       Tenant         @relation(fields: [tenantId], references: [id])
+  roleId       String
+  role         Role           @relation(fields: [roleId], references: [id])
+  name         String
+  email        String         @unique
+  phone        String?
+  passwordHash String
+  pinHash      String?
+  isActive     Boolean        @default(true)
+  isTechnician Boolean        @default(false)
+  lastLoginAt  DateTime?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  branches      UserBranch[]
+  refreshTokens RefreshToken[]
+
+  @@index([tenantId])
+  @@map("users")
+}
+
+model UserBranch {
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branchId String
+  branch   Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@id([userId, branchId])
+  @@map("user_branches")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  userAgent String?
+  ip        String?
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+// ─────────────────────── A. Platform: audit ───────────────────────
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  tenantId  String
+  branchId  String?
+  userId    String?
+  action    String // e.g. sales.void, price.change, stock.adjust
+  entity    String
+  entityId  String?
+  before    Json?
+  after     Json?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, entity, entityId])
+  @@map("audit_logs")
+}
+
+// ─────────────────────── B. Catalog ───────────────────────
+
+model Category {
+  id       String     @id @default(uuid())
+  tenantId String
+  name     String
+  parentId String?
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryTree")
+  products Product[]
+
+  @@unique([tenantId, name])
+  @@map("categories")
+}
+
+model Brand {
+  id       String    @id @default(uuid())
+  tenantId String
+  name     String
+  products Product[]
+
+  @@unique([tenantId, name])
+  @@map("brands")
+}
+
+model Product {
+  id           String           @id @default(uuid())
+  tenantId     String
+  categoryId   String?
+  category     Category?        @relation(fields: [categoryId], references: [id])
+  brandId      String?
+  brand        Brand?           @relation(fields: [brandId], references: [id])
+  name         String
+  model        String?
+  trackingType TrackingType     @default(QUANTITY)
+  hasDualImei  Boolean          @default(false)
+  warrantyDays Int?
+  description  String?
+  isActive     Boolean          @default(true)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  variants     ProductVariant[]
+
+  @@index([tenantId, name])
+  @@map("products")
+}
+
+model ProductVariant {
+  id            String         @id @default(uuid())
+  tenantId      String
+  productId     String
+  product       Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  sku           String
+  barcode       String?
+  name          String // e.g. "128GB Black"
+  attributes    Json? // { color, storage, ram, cpu }
+  costCents     Int            @default(0)
+  priceCents    Int
+  wholesaleCents Int?
+  minPriceCents Int?
+  reorderLevel  Int            @default(0)
+  isActive      Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  priceHistory  PriceHistory[]
+  stockUnits    StockUnit[]
+  balances      StockBalance[]
+
+  @@unique([tenantId, sku])
+  @@index([tenantId, barcode])
+  @@map("product_variants")
+}
+
+model PriceHistory {
+  id         String         @id @default(uuid())
+  variantId  String
+  variant    ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  costCents  Int
+  priceCents Int
+  changedBy  String?
+  changedAt  DateTime       @default(now())
+
+  @@map("price_history")
+}
+
+// ─────────────────────── B. Serialized inventory & ledger ───────────────────────
+
+model StockUnit {
+  id          String          @id @default(uuid())
+  tenantId    String
+  variantId   String
+  variant     ProductVariant  @relation(fields: [variantId], references: [id])
+  branchId    String
+  imei1       String?
+  imei2       String?
+  serial      String?
+  condition   UnitCondition   @default(NEW)
+  status      StockUnitStatus @default(IN_STOCK)
+  costCents   Int
+  priceCents  Int? // overrides the variant price (e.g. used grade pricing)
+  supplierRef String?
+  receivedAt  DateTime        @default(now())
+  soldAt      DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  movements   StockMovement[]
+  saleLines   SalesInvoiceLine[]
+
+  @@unique([tenantId, imei1])
+  @@unique([tenantId, imei2])
+  @@unique([tenantId, serial])
+  @@index([tenantId, branchId, status])
+  @@map("stock_units")
+}
+
+model StockMovement {
+  id            String       @id @default(uuid())
+  tenantId      String
+  branchId      String
+  variantId     String
+  stockUnitId   String?
+  stockUnit     StockUnit?   @relation(fields: [stockUnitId], references: [id])
+  type          MovementType
+  qty           Int // signed: + into stock, - out of stock
+  unitCostCents Int          @default(0)
+  refType       String? // SalesInvoice, RepairJob, StockReceipt, Adjustment
+  refId         String?
+  note          String?
+  userId        String?
+  createdAt     DateTime     @default(now())
+
+  @@index([tenantId, branchId, variantId, createdAt])
+  @@index([refType, refId])
+  @@map("stock_movements")
+}
+
+model StockBalance {
+  id          String         @id @default(uuid())
+  tenantId    String
+  branchId    String
+  variantId   String
+  variant     ProductVariant @relation(fields: [variantId], references: [id])
+  qtyOnHand   Int            @default(0)
+  qtyReserved Int            @default(0)
+  avgCostCents Int           @default(0)
+  updatedAt   DateTime       @updatedAt
+
+  @@unique([branchId, variantId])
+  @@index([tenantId])
+  @@map("stock_balances")
+}
+
+model StockReceipt {
+  id           String   @id @default(uuid())
+  tenantId     String
+  branchId     String
+  number       String
+  supplierName String?
+  reference    String?
+  note         String?
+  totalCents   Int
+  userId       String?
+  createdAt    DateTime @default(now())
+
+  @@unique([tenantId, number])
+  @@map("stock_receipts")
+}
+
+// ─────────────────────── F. Customers ───────────────────────
+
+model Customer {
+  id            String       @id @default(uuid())
+  tenantId      String
+  name          String
+  phone         String
+  whatsapp      String?
+  email         String?
+  nic           String?
+  district      String?
+  address       String?
+  type          CustomerType @default(RETAIL)
+  notes         String?
+  tags          String[]
+  preferredLang String       @default("en") // en | ta | si
+  loyaltyPoints Int          @default(0)
+  creditLimitCents Int       @default(0)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  devices       CustomerDevice[]
+  invoices      SalesInvoice[]
+  repairJobs    RepairJob[]
+  loyaltyTxns   LoyaltyTransaction[]
+
+  @@unique([tenantId, phone])
+  @@index([tenantId, name])
+  @@map("customers")
+}
+
+model CustomerDevice {
+  id          String   @id @default(uuid())
+  tenantId    String
+  customerId  String
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  stockUnitId String?
+  brand       String?
+  model       String?
+  imei        String?
+  serial      String?
+  purchasedAt DateTime?
+  warrantyEndsAt DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, imei])
+  @@map("customer_devices")
+}
+
+model LoyaltyTransaction {
+  id         String   @id @default(uuid())
+  tenantId   String
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  points     Int // + earned, - redeemed
+  reason     String
+  refType    String?
+  refId      String?
+  createdAt  DateTime @default(now())
+
+  @@map("loyalty_transactions")
+}
+
+// ─────────────────────── C. Sales & payments ───────────────────────
+
+model SalesInvoice {
+  id            String       @id @default(uuid())
+  tenantId      String
+  branchId      String
+  number        String
+  customerId    String?
+  customer      Customer?    @relation(fields: [customerId], references: [id])
+  cashierId     String
+  status        SaleStatus   @default(COMPLETED)
+  subtotalCents Int // sum of line gross before any discount
+  discountCents Int // line + bill discounts
+  taxCents      Int
+  totalCents    Int
+  paidCents     Int          @default(0)
+  balanceCents  Int          @default(0)
+  changeCents   Int          @default(0)
+  pointsEarned  Int          @default(0)
+  note          String?
+  clientRef     String? // idempotency key for offline POS sync
+  issuedAt      DateTime     @default(now())
+  voidedAt      DateTime?
+  voidReason    String?
+  createdAt     DateTime     @default(now())
+
+  lines         SalesInvoiceLine[]
+  payments      Payment[]
+
+  @@unique([tenantId, number])
+  @@unique([tenantId, clientRef])
+  @@index([tenantId, branchId, issuedAt])
+  @@map("sales_invoices")
+}
+
+model SalesInvoiceLine {
+  id             String         @id @default(uuid())
+  invoiceId      String
+  invoice        SalesInvoice   @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  variantId      String
+  stockUnitId    String?
+  stockUnit      StockUnit?     @relation(fields: [stockUnitId], references: [id])
+  description    String
+  qty            Int
+  unitPriceCents Int
+  discountCents  Int            @default(0) // line discount + allocated bill discount
+  taxCents       Int            @default(0)
+  lineTotalCents Int
+  costCents      Int            @default(0) // total cost of this line
+  warrantyDays   Int?
+  warrantyEndsAt DateTime?
+
+  @@map("sales_invoice_lines")
+}
+
+model HeldBill {
+  id        String   @id @default(uuid())
+  tenantId  String
+  branchId  String
+  userId    String
+  label     String?
+  payload   Json
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, branchId])
+  @@map("held_bills")
+}
+
+model Payment {
+  id          String        @id @default(uuid())
+  tenantId    String
+  branchId    String
+  number      String
+  invoiceId   String?
+  invoice     SalesInvoice? @relation(fields: [invoiceId], references: [id])
+  repairJobId String?
+  repairJob   RepairJob?    @relation(fields: [repairJobId], references: [id])
+  customerId  String?
+  method      PaymentMethod
+  amountCents Int
+  reference   String?
+  status      PaymentStatus @default(VALID)
+  receivedBy  String
+  createdAt   DateTime      @default(now())
+
+  @@unique([tenantId, number])
+  @@index([tenantId, branchId, createdAt])
+  @@map("payments")
+}
+
+// ─────────────────────── D. Repairs ───────────────────────
+
+model RepairJob {
+  id              String       @id @default(uuid())
+  tenantId        String
+  branchId        String
+  number          String
+  /// Unguessable code for the public tracking page (job numbers repeat across shops)
+  trackCode       String       @unique
+  customerId      String
+  customer        Customer     @relation(fields: [customerId], references: [id])
+  deviceBrand     String?
+  deviceModel     String
+  imei            String?
+  serial          String?
+  color           String?
+  reportedFault   String
+  accessories     String[]
+  conditionNotes  String?
+  powersOn        Boolean?
+  passcodeEnc     String? // AES-256-GCM encrypted
+  status          RepairStatus @default(RECEIVED)
+  technicianId    String?
+  diagnosis       String?
+  estimateCents   Int?
+  approvedAt      DateTime?
+  labourCents     Int          @default(0)
+  partsCents      Int          @default(0)
+  totalCents      Int          @default(0)
+  paidCents       Int          @default(0)
+  promisedAt      DateTime?
+  warrantyDays    Int?
+  warrantyEndsAt  DateTime?
+  parentJobId     String? // warranty comeback job
+  deliveredAt     DateTime?
+  createdBy       String
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  history         RepairStatusHistory[]
+  parts           RepairPart[]
+  photos          RepairPhoto[]
+  payments        Payment[]
+
+  @@unique([tenantId, number])
+  @@index([tenantId, branchId, status])
+  @@index([tenantId, technicianId, status])
+  @@map("repair_jobs")
+}
+
+model RepairStatusHistory {
+  id         String        @id @default(uuid())
+  jobId      String
+  job        RepairJob     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  fromStatus RepairStatus?
+  toStatus   RepairStatus
+  note       String?
+  userId     String?
+  createdAt  DateTime      @default(now())
+
+  @@map("repair_status_history")
+}
+
+model RepairPart {
+  id             String    @id @default(uuid())
+  jobId          String
+  job            RepairJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  variantId      String
+  stockUnitId    String?
+  description    String
+  qty            Int
+  unitPriceCents Int
+  costCents      Int
+  createdAt      DateTime  @default(now())
+
+  @@map("repair_parts")
+}
+
+model RepairPhoto {
+  id        String    @id @default(uuid())
+  jobId     String
+  job       RepairJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  key       String
+  caption   String?
+  stage     String    @default("INTAKE") // INTAKE | REPAIR | DELIVERY
+  createdAt DateTime  @default(now())
+
+  @@map("repair_photos")
+}
+
+// ─────────────────────── F. Notifications ───────────────────────
+
+model NotificationTemplate {
+  id       String              @id @default(uuid())
+  tenantId String
+  event    String // INVOICE_ISSUED, JOB_RECEIVED, JOB_ESTIMATE, JOB_READY, JOB_DELIVERED, ...
+  channel  NotificationChannel
+  language String              @default("en")
+  body     String
+  isActive Boolean             @default(true)
+
+  @@unique([tenantId, event, channel, language])
+  @@map("notification_templates")
+}
+
+model NotificationLog {
+  id        String              @id @default(uuid())
+  tenantId  String
+  event     String
+  channel   NotificationChannel
+  to        String
+  body      String
+  status    NotificationStatus  @default(QUEUED)
+  error     String?
+  attempts  Int                 @default(0)
+  refType   String?
+  refId     String?
+  sentAt    DateTime?
+  createdAt DateTime            @default(now())
+
+  @@index([tenantId, createdAt])
+  @@map("notification_logs")
+}

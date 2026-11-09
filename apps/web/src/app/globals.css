@@ -1,0 +1,89 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/atkinson-hyperlegible-next';
+@import '@fontsource/atkinson-hyperlegible-mono/400.css';
+@import '@fontsource/atkinson-hyperlegible-mono/700.css';
+
+/*
+  Shop ERP visual system
+  - ink: text and structure       - canvas: the counter-top behind panels
+  - solder: primary actions (circuit-board green)
+  - led: waiting / needs attention (indicator amber)
+  - fault: errors and destructive actions
+  Atkinson Hyperlegible was designed to keep 0/O, 1/l/I and 5/S apart:
+  the mono cut is used for IMEIs, serials, job and invoice numbers.
+*/
+@theme {
+  --color-ink: #18202b;
+  --color-ink-2: #4a5563;
+  --color-ink-3: #77818d;
+  --color-canvas: #edf0f2;
+  --color-surface: #ffffff;
+  --color-line: #d5dbe0;
+  --color-line-2: #e6eaed;
+  --color-solder: #145c45;
+  --color-solder-2: #0e4533;
+  --color-solder-tint: #e3efe9;
+  --color-led: #d99a06;
+  --color-led-tint: #fbf1d9;
+  --color-fault: #b3261e;
+  --color-fault-tint: #f8e3e1;
+  --color-paper: #fbfbf8;
+
+  --font-sans: 'Atkinson Hyperlegible Next Variable', system-ui, sans-serif;
+  --font-mono: 'Atkinson Hyperlegible Mono', ui-monospace, monospace;
+
+  --radius-ctl: 6px;
+  --radius-panel: 10px;
+}
+
+html {
+  font-family: var(--font-sans);
+  color: var(--color-ink);
+  background: var(--color-canvas);
+  font-size: 15px;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  min-height: 100dvh;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.code {
+  font-family: var(--font-mono);
+  letter-spacing: 0.01em;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-solder);
+  outline-offset: 2px;
+}
+
+/* The POS bill is drawn as a thermal receipt strip: perforated top and bottom edges. */
+.receipt {
+  background: var(--color-paper);
+  --tooth: 7px;
+  mask:
+    conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) bottom / calc(var(--tooth) * 2) var(--tooth) repeat-x,
+    linear-gradient(#000 0 0) top / 100% calc(100% - var(--tooth)) no-repeat;
+  -webkit-mask:
+    conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) bottom / calc(var(--tooth) * 2) var(--tooth) repeat-x,
+    linear-gradient(#000 0 0) top / 100% calc(100% - var(--tooth)) no-repeat;
+  padding-bottom: calc(var(--tooth) + 12px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+}

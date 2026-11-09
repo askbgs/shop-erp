@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.turbo/
+*.tsbuildinfo
+.env
+apps/api/src/generated/
+coverage/
+.DS_Store
