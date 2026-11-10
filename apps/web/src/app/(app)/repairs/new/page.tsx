@@ -106,7 +106,7 @@ export default function NewRepairPage() {
                 {ACCESSORIES.map((a) => {
                   const on = acc.includes(a);
                   return (
-                    <button key={a} type="button" aria-pressed={on} onClick={() => setAcc(on ? acc.filter((x) => x !== a) : [...acc, a])} className={cx('h-9 rounded-ctl border px-3 text-sm font-semibold', on ? 'border-solder bg-solder-tint text-solder-2' : 'border-line text-ink-2')}>
+                    <button key={a} type="button" aria-pressed={on} onClick={() => setAcc(on ? acc.filter((x) => x !== a) : [...acc, a])} className={cx('h-9 rounded-full border px-4 text-sm font-semibold transition-colors', on ? 'border-solder bg-solder-tint text-solder-2' : 'border-line text-ink-2')}>
                       {a}
                     </button>
                   );

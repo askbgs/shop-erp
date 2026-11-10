@@ -66,6 +66,12 @@ npm run dev                                  # http://localhost:3001
 | Settings | Shop (VAT, warranty, loyalty), staff with roles and PINs, branches, customer messages, plan |
 | /track | Public page where customers check a repair with its tracking code and their mobile number |
 
+**Sign-in carousel.** The login and sign-up pages are split screens: the form on one side and a
+carousel of four illustrated slides on the other (a compact version shows on phones). The slides
+are SVG drawings in `apps/web/src/components/auth-illustrations.tsx`. To use your own photos,
+put them in `apps/web/public/auth/` and set `image: '/auth/your-photo.jpg'` on a slide in
+`auth-carousel.tsx`.
+
 The browser never holds API tokens: `/api/auth/*` and `/api/v1/*` in the web app are server routes
 that keep the tokens in httpOnly cookies and forward requests to the API.
 

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { ButtonHTMLAttributes, forwardRef, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes, useEffect, useRef } from 'react';
+import { ButtonHTMLAttributes, forwardRef, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes, cloneElement, isValidElement, ReactElement, useEffect, useId, useRef } from 'react';
 
 export function cx(...c: (string | false | null | undefined)[]) {
   return c.filter(Boolean).join(' ');
@@ -9,10 +9,10 @@ export function cx(...c: (string | false | null | undefined)[]) {
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
 const VARIANTS: Record<Variant, string> = {
-  primary: 'bg-solder text-white hover:bg-solder-2 border-solder',
-  secondary: 'bg-surface text-ink border-line hover:border-ink-3',
-  ghost: 'bg-transparent text-ink-2 border-transparent hover:bg-line-2',
-  danger: 'bg-surface text-fault border-fault/40 hover:bg-fault-tint',
+  primary: 'bg-solder text-white hover:bg-solder-2 border-solder shadow-[0_1px_2px_rgb(16_40_30/0.2)]',
+  secondary: 'bg-surface text-ink border-line hover:bg-canvas hover:border-ink-3/40 shadow-card',
+  ghost: 'bg-transparent text-ink-2 border-transparent hover:bg-line-2 hover:text-ink',
+  danger: 'bg-surface text-fault border-fault/30 hover:bg-fault-tint',
 };
 
 export function Button({ variant = 'secondary', size = 'md', className, loading, children, ...p }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: 'sm' | 'md' | 'lg'; loading?: boolean }) {
@@ -22,7 +22,7 @@ export function Button({ variant = 'secondary', size = 'md', className, loading,
       {...p}
       disabled={p.disabled || loading}
       className={cx(
-        'inline-flex items-center justify-center gap-2 rounded-ctl border font-semibold whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed',
+        'inline-flex items-center justify-center gap-2 rounded-ctl border font-semibold whitespace-nowrap transition-colors disabled:opacity-50 disabled:cursor-not-allowed [&_svg]:size-4 [&_svg]:shrink-0',
         size === 'sm' ? 'h-8 px-3 text-sm' : size === 'lg' ? 'h-12 px-5 text-base' : 'h-10 px-4 text-sm',
         VARIANTS[variant],
         className,
@@ -35,16 +35,16 @@ export function Button({ variant = 'secondary', size = 'md', className, loading,
 
 export function ButtonLink({ href, variant = 'secondary', className, children }: { href: string; variant?: Variant; className?: string; children: ReactNode }) {
   return (
-    <Link href={href} className={cx('inline-flex h-10 items-center justify-center gap-2 rounded-ctl border px-4 text-sm font-semibold', VARIANTS[variant], className)}>
+    <Link href={href} className={cx('inline-flex h-10 items-center justify-center gap-2 rounded-ctl border px-4 text-sm font-semibold transition-colors [&_svg]:size-4', VARIANTS[variant], className)}>
       {children}
     </Link>
   );
 }
 
-const control = 'w-full rounded-ctl border border-line bg-surface px-3 text-[15px] text-ink placeholder:text-ink-3 focus:border-solder focus:outline-none disabled:bg-line-2';
+const control = 'w-full rounded-ctl border border-line bg-surface px-3.5 text-[15px] text-ink placeholder:text-ink-3/80 transition-shadow focus:border-solder focus:outline-none focus:ring-4 focus:ring-solder/12 disabled:bg-line-2 disabled:text-ink-2';
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input({ className, ...p }, ref) {
-  return <input ref={ref} {...p} className={cx(control, 'h-10', className)} />;
+  return <input ref={ref} {...p} className={cx(control, 'h-11', className)} />;
 });
 
 export function Textarea({ className, ...p }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
@@ -53,42 +53,46 @@ export function Textarea({ className, ...p }: TextareaHTMLAttributes<HTMLTextAre
 
 export function Select({ className, children, ...p }: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
-    <select {...p} className={cx(control, 'h-10 pr-8', className)}>
+    <select {...p} className={cx(control, 'h-11 pr-8', className)}>
       {children}
     </select>
   );
 }
 
+/** Label + control. The hint sits outside the <label> so it is not read as part of the field's name. */
 export function Field({ label, hint, error, children, className }: { label: string; hint?: string; error?: string; children: ReactNode; className?: string }) {
+  const id = useId();
+  const note = error ?? hint;
   return (
-    <label className={cx('block', className)}>
-      <span className="mb-1 block text-sm font-semibold text-ink-2">{label}</span>
-      {children}
-      {hint && !error && <span className="mt-1 block text-xs text-ink-3">{hint}</span>}
-      {error && <span className="mt-1 block text-xs text-fault">{error}</span>}
-    </label>
+    <div className={cx('block', className)}>
+      <label className="block">
+        <span className="mb-1.5 block text-sm font-semibold text-ink-2">{label}</span>
+        {note && isValidElement(children) ? cloneElement(children as ReactElement<{ 'aria-describedby'?: string }>, { 'aria-describedby': id }) : children}
+      </label>
+      {note && <span id={id} className={cx('mt-1.5 block text-xs', error ? 'text-fault' : 'text-ink-3')}>{note}</span>}
+    </div>
   );
 }
 
 export function Panel({ title, actions, children, className, pad = true }: { title?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string; pad?: boolean }) {
   return (
-    <section className={cx('rounded-panel border border-line bg-surface', className)}>
+    <section className={cx('rounded-panel border border-line/80 bg-surface shadow-card', className)}>
       {(title || actions) && (
-        <header className="flex items-center justify-between gap-3 border-b border-line-2 px-4 py-3">
+        <header className="flex items-center justify-between gap-3 border-b border-line-2 px-5 py-3.5">
           <h2 className="text-[15px] font-bold">{title}</h2>
           <div className="flex items-center gap-2">{actions}</div>
         </header>
       )}
-      <div className={pad ? 'p-4' : ''}>{children}</div>
+      <div className={pad ? 'p-5' : ''}>{children}</div>
     </section>
   );
 }
 
 export function PageHeader({ title, sub, actions }: { title: string; sub?: ReactNode; actions?: ReactNode }) {
   return (
-    <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
+    <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">{title}</h1>
+        <h1 className="text-[1.75rem] leading-tight font-bold tracking-tight">{title}</h1>
         {sub && <p className="mt-1 text-ink-2">{sub}</p>}
       </div>
       {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
@@ -105,7 +109,7 @@ const TONES: Record<Tone, string> = {
   info: 'bg-[#e4ecf6] text-[#23466f]',
 };
 export function Badge({ tone = 'neutral', children }: { tone?: Tone; children: ReactNode }) {
-  return <span className={cx('inline-flex items-center rounded px-2 py-0.5 text-xs font-bold', TONES[tone])}>{children}</span>;
+  return <span className={cx('inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold whitespace-nowrap', TONES[tone])}>{children}</span>;
 }
 
 export function Table({ head, children, empty }: { head: ReactNode[]; children: ReactNode; empty?: ReactNode }) {
@@ -114,15 +118,15 @@ export function Table({ head, children, empty }: { head: ReactNode[]; children: 
     <div className="overflow-x-auto">
       <table className="w-full border-collapse text-sm">
         <thead>
-          <tr className="border-b border-line text-left text-ink-3">
+          <tr className="border-b border-line bg-canvas/60 text-left text-ink-3">
             {head.map((h, i) => (
-              <th key={i} className="px-3 py-2 font-semibold whitespace-nowrap">
+              <th key={i} className="px-4 py-2.5 text-xs font-semibold whitespace-nowrap">
                 {h}
               </th>
             ))}
           </tr>
         </thead>
-        <tbody className="[&>tr]:border-b [&>tr]:border-line-2 [&>tr:last-child]:border-0 [&_td]:px-3 [&_td]:py-2.5 [&_td]:align-top">{children}</tbody>
+        <tbody className="[&>tr]:border-b [&>tr]:border-line-2 [&>tr:last-child]:border-0 [&_td]:px-4 [&_td]:py-3 [&_td]:align-top [&>tr]:transition-colors">{children}</tbody>
       </table>
       {!hasRows && <div className="px-3 py-10 text-center text-ink-3">{empty ?? 'Nothing here yet.'}</div>}
     </div>
@@ -147,7 +151,7 @@ export function Modal({ open, title, onClose, children, footer, wide }: { open: 
     <dialog
       ref={ref}
       onClose={onClose}
-      className={cx('m-auto w-[calc(100%-2rem)] rounded-panel border border-line bg-surface p-0 text-ink backdrop:bg-ink/40', wide ? 'max-w-2xl' : 'max-w-md')}
+      className={cx('m-auto w-[calc(100%-2rem)] rounded-[20px] border border-line bg-surface p-0 text-ink shadow-lift backdrop:bg-night/45 backdrop:backdrop-blur-[2px]', wide ? 'max-w-2xl' : 'max-w-md')}
     >
       {open && (
         <>
@@ -165,11 +169,14 @@ export function Modal({ open, title, onClose, children, footer, wide }: { open: 
   );
 }
 
-export function Stat({ label, value, sub, tone }: { label: string; value: ReactNode; sub?: ReactNode; tone?: 'wait' | 'bad' }) {
+export function Stat({ label, value, sub, tone, icon }: { label: string; value: ReactNode; sub?: ReactNode; tone?: 'wait' | 'bad'; icon?: ReactNode }) {
   return (
-    <div className="rounded-panel border border-line bg-surface p-4">
-      <div className="text-sm text-ink-3">{label}</div>
-      <div className={cx('num mt-1 text-2xl font-bold', tone === 'wait' && 'text-[#7a5600]', tone === 'bad' && 'text-fault')}>{value}</div>
+    <div className="rounded-panel border border-line/80 bg-surface p-5 shadow-card">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-sm font-semibold text-ink-3">{label}</div>
+        {icon && <span aria-hidden className={cx('grid size-9 place-items-center rounded-full [&_svg]:size-[18px]', tone === 'wait' ? 'bg-led-tint text-[#7a5600]' : tone === 'bad' ? 'bg-fault-tint text-fault' : 'bg-solder-tint text-solder')}>{icon}</span>}
+      </div>
+      <div className={cx('num mt-2 text-[1.6rem] leading-tight font-bold tracking-tight', tone === 'wait' && 'text-[#7a5600]', tone === 'bad' && 'text-fault')}>{value}</div>
       {sub && <div className="mt-1 text-sm text-ink-2">{sub}</div>}
     </div>
   );

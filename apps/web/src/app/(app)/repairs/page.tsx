@@ -57,7 +57,7 @@ function RepairsList() {
               key={f.key}
               type="button"
               onClick={() => { setPage(1); router.replace(`/repairs?status=${f.key}`); }}
-              className={cx('h-9 rounded-ctl border px-3 text-sm font-semibold', filter === f.key ? 'border-solder bg-solder-tint text-solder-2' : 'border-line bg-surface text-ink-2')}
+              className={cx('h-9 rounded-full border px-4 text-sm font-semibold transition-colors', filter === f.key ? 'border-solder bg-solder-tint text-solder-2' : 'border-line bg-surface text-ink-2')}
             >
               {f.label}
               {n ? <span className="num ml-2 rounded bg-led px-1.5 text-white">{n}</span> : null}

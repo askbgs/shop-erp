@@ -6,34 +6,42 @@
 /*
   Shop ERP visual system
   - ink: text and structure       - canvas: the counter-top behind panels
-  - solder: primary actions (circuit-board green)
+  - night: the sidebar and the sign-in panels (deep circuit-board green)
+  - solder: primary actions (circuit-board green); mint: highlights on night
   - led: waiting / needs attention (indicator amber)
   - fault: errors and destructive actions
   Atkinson Hyperlegible was designed to keep 0/O, 1/l/I and 5/S apart:
   the mono cut is used for IMEIs, serials, job and invoice numbers.
 */
 @theme {
-  --color-ink: #18202b;
-  --color-ink-2: #4a5563;
-  --color-ink-3: #77818d;
-  --color-canvas: #edf0f2;
+  --color-ink: #142019;
+  --color-ink-2: #46524c;
+  --color-ink-3: #7a857f;
+  --color-canvas: #f3f5f4;
   --color-surface: #ffffff;
-  --color-line: #d5dbe0;
-  --color-line-2: #e6eaed;
-  --color-solder: #145c45;
-  --color-solder-2: #0e4533;
-  --color-solder-tint: #e3efe9;
-  --color-led: #d99a06;
-  --color-led-tint: #fbf1d9;
-  --color-fault: #b3261e;
-  --color-fault-tint: #f8e3e1;
-  --color-paper: #fbfbf8;
+  --color-line: #dfe5e2;
+  --color-line-2: #edf1ef;
+  --color-solder: #10845f;
+  --color-solder-2: #0b6a4b;
+  --color-solder-tint: #e4f3ec;
+  --color-night: #0c2a21;
+  --color-night-2: #143a2e;
+  --color-night-3: #9fc4b5;
+  --color-mint: #5fe0ad;
+  --color-led: #e3a008;
+  --color-led-tint: #fdf3d8;
+  --color-fault: #c8372d;
+  --color-fault-tint: #fbe7e5;
+  --color-paper: #fcfcf9;
 
   --font-sans: 'Atkinson Hyperlegible Next Variable', system-ui, sans-serif;
   --font-mono: 'Atkinson Hyperlegible Mono', ui-monospace, monospace;
 
-  --radius-ctl: 6px;
-  --radius-panel: 10px;
+  --radius-ctl: 10px;
+  --radius-panel: 16px;
+
+  --shadow-card: 0 1px 2px rgb(16 40 30 / 0.05), 0 1px 3px rgb(16 40 30 / 0.04);
+  --shadow-lift: 0 10px 30px -12px rgb(16 40 30 / 0.25);
 }
 
 html {
@@ -86,4 +94,9 @@ body {
   .no-print {
     display: none !important;
   }
+}
+
+/* Carousel slides cross-fade; the motion answers the slide change only. */
+.slide {
+  transition: opacity 600ms ease, transform 600ms ease;
 }

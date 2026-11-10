@@ -25,7 +25,7 @@ export default function SettingsPage() {
       <div className="mb-4 flex flex-wrap gap-2" role="tablist">
         {tabs.map((t) => (
           <button key={t.key} role="tab" aria-selected={tab === t.key} type="button" onClick={() => setTab(t.key)}
-            className={cx('h-9 rounded-ctl border px-3 text-sm font-semibold', tab === t.key ? 'border-solder bg-solder-tint text-solder-2' : 'border-line bg-surface text-ink-2')}>
+            className={cx('h-9 rounded-full border px-4 text-sm font-semibold transition-colors', tab === t.key ? 'border-solder bg-solder-tint text-solder-2' : 'border-line bg-surface text-ink-2')}>
             {t.label}
           </button>
         ))}

@@ -1,6 +1,7 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
+import { HandCoins, ReceiptText, ScanBarcode, TrendingUp, Wallet, Wrench } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
@@ -42,8 +43,8 @@ export default function DashboardPage() {
         sub={new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Colombo', weekday: 'long', day: 'numeric', month: 'long' }).format(new Date())}
         actions={
           <>
-            {can('repair.create') && <ButtonLink href="/repairs/new">Take in a repair</ButtonLink>}
-            {can('sales.create') && <ButtonLink href="/pos" variant="primary">Open point of sale</ButtonLink>}
+            {can('repair.create') && <ButtonLink href="/repairs/new"><Wrench /> Take in a repair</ButtonLink>}
+            {can('sales.create') && <ButtonLink href="/pos" variant="primary"><ScanBarcode /> Open point of sale</ButtonLink>}
           </>
         }
       />
@@ -51,11 +52,11 @@ export default function DashboardPage() {
         <Loading />
       ) : (
         <div className="space-y-6">
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Stat label="Sales today" value={lkr(d.data.sales.totalCents)} sub={`${d.data.sales.invoices} invoice${d.data.sales.invoices === 1 ? '' : 's'}`} />
-            <Stat label="Gross profit" value={d.data.sales.grossProfitCents === undefined ? '—' : lkr(d.data.sales.grossProfitCents)} sub="Sales after VAT, minus cost" />
-            <Stat label="Money received" value={lkr(cash)} sub={`Repairs delivered: ${d.data.repairs.deliveredToday}`} />
-            <Stat label="Owed by customers" value={lkr(d.data.receivables.balanceCents)} sub={`${d.data.receivables.invoices} unpaid invoice${d.data.receivables.invoices === 1 ? '' : 's'}`} tone={d.data.receivables.balanceCents > 0 ? 'wait' : undefined} />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <Stat icon={<ReceiptText />} label="Sales today" value={lkr(d.data.sales.totalCents)} sub={`${d.data.sales.invoices} invoice${d.data.sales.invoices === 1 ? '' : 's'}`} />
+            <Stat icon={<TrendingUp />} label="Gross profit" value={d.data.sales.grossProfitCents === undefined ? '—' : lkr(d.data.sales.grossProfitCents)} sub="Sales after VAT, minus cost" />
+            <Stat icon={<Wallet />} label="Money received" value={lkr(cash)} sub={`Repairs delivered: ${d.data.repairs.deliveredToday}`} />
+            <Stat icon={<HandCoins />} label="Owed by customers" value={lkr(d.data.receivables.balanceCents)} sub={`${d.data.receivables.invoices} unpaid invoice${d.data.receivables.invoices === 1 ? '' : 's'}`} tone={d.data.receivables.balanceCents > 0 ? 'wait' : undefined} />
           </div>
 
           <div className="grid gap-6 lg:grid-cols-[1.2fr_1fr]">
