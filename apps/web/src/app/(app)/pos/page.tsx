@@ -2,6 +2,7 @@
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { ProductThumb } from '@/components/product-images';
 import { Alert, Badge, Button, cx, Field, Input, Modal, Select } from '@/components/ui';
 import { api, ApiError, Paged, qs } from '@/lib/api';
 import { centsToInput, CONDITION_LABEL, lkr, newClientRef, PAYMENT_LABEL, toCents, toLkPhone } from '@/lib/format';
@@ -19,6 +20,7 @@ interface CartLine {
   condition?: string;
   title: string;
   sub: string;
+  imageUrl?: string | null;
   qty: number;
   serialized: boolean;
   listPriceCents: number;
@@ -93,7 +95,7 @@ export default function PosPage() {
   const change = Math.max(tendered - totals.total, 0);
   const short = Math.max(totals.total - tendered, 0);
 
-  function addUnit(unit: StockUnit, priceCents: number) {
+  function addUnit(unit: StockUnit, priceCents: number, imageUrl?: string | null) {
     if (lines.some((l) => l.stockUnitId === unit.id)) {
       setScanMsg({ tone: 'wait', text: 'That unit is already on the bill.' });
       return;
@@ -103,7 +105,7 @@ export default function PosPage() {
       ...ls,
       {
         key: unit.id, variantId: unit.variantId, stockUnitId: unit.id, imei: unit.imei1, serial: unit.serial, condition: unit.condition,
-        title: `${p.name} ${unit.variant.name}`, sub: unit.imei1 ?? unit.serial ?? '', qty: 1, serialized: true,
+        title: `${p.name} ${unit.variant.name}`, sub: unit.imei1 ?? unit.serial ?? '', imageUrl: imageUrl ?? p.images?.[0]?.url, qty: 1, serialized: true,
         listPriceCents: priceCents, priceInput: centsToInput(priceCents), discountInput: '',
       },
     ]);
@@ -118,7 +120,7 @@ export default function PosPage() {
       return [
         ...ls,
         {
-          key: `${v.id}-${Date.now()}`, variantId: v.id, title: `${product.name} ${v.name}`.trim(), sub: product.trackingType === 'SERVICE' ? 'Service' : v.sku,
+          key: `${v.id}-${Date.now()}`, variantId: v.id, title: `${product.name} ${v.name}`.trim(), sub: product.trackingType === 'SERVICE' ? 'Service' : v.sku, imageUrl: product.images?.[0]?.url,
           qty: 1, serialized: false, listPriceCents: v.priceCents, priceInput: centsToInput(v.priceCents), discountInput: '',
         },
       ];
@@ -137,11 +139,11 @@ export default function PosPage() {
         if (!r.sellable) {
           const where = r.unit.branchId !== branchId ? 'is at another branch' : `is ${r.unit.status.toLowerCase().replace('_', ' ')}`;
           setScanMsg({ tone: 'bad', text: `${c} ${where} and cannot be sold here.` });
-        } else addUnit(r.unit, r.priceCents);
+        } else addUnit(r.unit, r.priceCents, r.imageUrl);
       } else if (r.match === 'VARIANT') {
         if (r.variant.product.trackingType === 'SERIAL') {
-          setPickUnitsFor({ ...r.variant.product, variants: [r.variant] });
-        } else addVariant({ ...r.variant.product, variants: [r.variant] }, r.variant.id);
+          setPickUnitsFor({ ...r.variant.product, variants: [r.variant], images: r.imageUrl ? [{ id: 'cover', url: r.imageUrl }] : [] });
+        } else addVariant({ ...r.variant.product, variants: [r.variant], images: r.imageUrl ? [{ id: 'cover', url: r.imageUrl }] : [] }, r.variant.id);
       } else {
         setSearch(c);
         setScanMsg({ tone: 'wait', text: `No IMEI, serial or barcode matches “${c}”. Pick from the search results instead.` });
@@ -259,7 +261,8 @@ export default function PosPage() {
               {products.data.items.map((p) =>
                 p.variants.map((v) => (
                   <li key={v.id} className="flex items-center justify-between gap-3 py-2">
-                    <div className="min-w-0">
+                    <ProductThumb url={p.images?.[0]?.url} size={44} />
+                    <div className="min-w-0 flex-1">
                       <div className="truncate font-semibold">{p.name} {v.name}</div>
                       <div className="text-xs text-ink-3">{p.trackingType === 'SERIAL' ? 'Each unit has its own IMEI/serial' : p.trackingType === 'SERVICE' ? 'Service' : v.sku}</div>
                     </div>
@@ -297,7 +300,8 @@ export default function PosPage() {
             {lines.map((l) => (
               <li key={l.key} className="py-3">
                 <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
+                  <ProductThumb url={l.imageUrl} size={40} />
+                  <div className="min-w-0 flex-1">
                     <div className="font-semibold leading-snug">{l.title}</div>
                     <div className="code text-xs text-ink-3">
                       {l.sub}

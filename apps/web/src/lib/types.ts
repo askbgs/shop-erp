@@ -21,6 +21,7 @@ export interface Product {
   brand: { id: string; name: string } | null;
   category: { id: string; name: string } | null;
   variants: Variant[];
+  images?: { id: string; url: string }[];
 }
 
 export interface StockUnit {
@@ -39,8 +40,8 @@ export interface StockUnit {
 }
 
 export type Lookup =
-  | { match: 'UNIT'; unit: StockUnit; sellable: boolean; priceCents: number }
-  | { match: 'VARIANT'; variant: Variant & { product: Product; balances?: { qtyOnHand: number }[] }; priceCents: number }
+  | { match: 'UNIT'; unit: StockUnit; sellable: boolean; priceCents: number; imageUrl: string | null }
+  | { match: 'VARIANT'; variant: Variant & { product: Product; balances?: { qtyOnHand: number }[] }; priceCents: number; imageUrl: string | null }
   | { match: 'NONE' };
 
 export interface Customer {

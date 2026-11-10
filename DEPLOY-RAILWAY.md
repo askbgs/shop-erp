@@ -140,7 +140,10 @@ WHATSAPP_WEBHOOK_TOKEN=<token>
 Messages that fail are retried 3 times; every message is listed under **Settings → Customer messages**
 in the app and in the `notification_logs` table.
 
-## 8. Optional: repair photos on Cloudflare R2
+## 8. Optional: store photos on Cloudflare R2
+
+Product photos work without this: they are kept in Postgres. For many photos, use R2 so the
+database stays small. Existing photos stay where they were saved.
 
 Create an R2 bucket and an API token with read/write on it, then set on `api`:
 

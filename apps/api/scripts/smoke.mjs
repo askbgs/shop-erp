@@ -26,6 +26,25 @@ async function call(method, path, { token, body, headers = {}, raw = false } = {
   return { status: res.status, data };
 }
 
+// 1x1 PNG and JPEG test images
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+const JPG = Buffer.from('/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=', 'base64');
+
+async function upload(path, token, bytes, name, type) {
+  const form = new FormData();
+  form.append('file', new Blob([bytes], { type }), name);
+  const res = await fetch(API + path, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: form });
+  const text = await res.text();
+  let data = text;
+  try { data = JSON.parse(text); } catch { /* text */ }
+  return { status: res.status, data };
+}
+
+async function getBytes(url, token) {
+  const res = await fetch(API.replace('/api/v1', '') + url, { headers: { authorization: `Bearer ${token}` } });
+  return { status: res.status, type: res.headers.get('content-type'), bytes: Buffer.from(await res.arrayBuffer()) };
+}
+
 /** Builds a valid 15-digit IMEI from a 14-digit body (Luhn check digit). */
 function imei(body14) {
   let sum = 0;
@@ -111,6 +130,7 @@ async function main() {
   });
   check('create serial product (iPhone 13)', r.status === 201, r.data);
   const iphone = r.data.variants[0];
+  const iphoneProductId = r.data.id;
   const glass = (await call('POST', '/catalog/products', { token: owner, body: { name: 'Tempered glass', trackingType: 'QUANTITY', variants: [{ sku: `TG-IP13-${run}`, barcode: `479${rnd()}0001`, name: 'iPhone 13', priceCents: 1_500_00, reorderLevel: 10 }] } })).data.variants[0];
   const screen = (await call('POST', '/catalog/products', { token: owner, body: { name: 'iPhone 13 screen (OLED)', trackingType: 'QUANTITY', variants: [{ sku: `SCR-IP13-${run}`, name: 'Spare part', priceCents: 28_000_00, reorderLevel: 2 }] } })).data.variants[0];
   const service = (await call('POST', '/catalog/products', { token: owner, body: { name: 'Data transfer service', trackingType: 'SERVICE', variants: [{ sku: `SVC-DT-${run}`, name: 'Standard', priceCents: 1_000_00 }] } })).data.variants[0];
@@ -143,6 +163,34 @@ async function main() {
   r = await call('GET', `/stock/balances?branchId=${branchId}`, { token: owner });
   const bal = (id) => r.data.items.find((b) => b.variantId === id);
   check('balances: 2 phones, 50 glass, 5 screens', bal(iphone.id)?.qtyOnHand === 2 && bal(glass.id)?.qtyOnHand === 50 && bal(screen.id)?.qtyOnHand === 5, r.data.items?.map((b) => [b.variant.sku, b.qtyOnHand]));
+
+  // ── 2b. Product images ──
+  console.log('\nProduct images');
+  r = await upload(`/catalog/products/${iphoneProductId}/images`, owner, PNG, 'front.png', 'image/png');
+  check('upload a PNG photo', r.status === 201 && r.data.url?.startsWith('/api/v1/files/'), r.data);
+  const img1 = r.data;
+  let f = await getBytes(img1.url, cashier);
+  check('photo is served back byte for byte to shop staff', f.status === 200 && f.type === 'image/png' && f.bytes.equals(PNG), { status: f.status, type: f.type, len: f.bytes.length });
+  r = await upload(`/catalog/products/${iphoneProductId}/images`, owner, JPG, 'back.jpg', 'image/jpeg');
+  const img2 = r.data;
+  check('upload a JPEG photo', r.status === 201, r.data);
+  r = await upload(`/catalog/products/${iphoneProductId}/images`, owner, Buffer.from('<?php echo 1; ?>'), 'evil.png', 'image/png');
+  check('a non-image disguised as PNG is rejected', r.status === 400, r.data);
+  r = await upload(`/catalog/products/${iphoneProductId}/images`, cashier, PNG, 'x.png', 'image/png');
+  check('cashier cannot add product photos', r.status === 403, r.data);
+  r = await call('GET', `/catalog/products/${iphoneProductId}`, { token: cashier });
+  check('product lists its photos, first upload is the cover', r.data.images?.length === 2 && r.data.images[0].id === img1.id, r.data.images);
+  r = await call('POST', `/catalog/products/${iphoneProductId}/images/${img2.id}/cover`, { token: owner });
+  r = await call('GET', `/catalog/products?q=iPhone`, { token: cashier });
+  check('set another photo as cover', r.data.items[0].images[0].id === img2.id, r.data.items[0].images);
+  for (let n = 0; n < 2; n++) await upload(`/catalog/products/${iphoneProductId}/images`, owner, PNG, `p${n}.png`, 'image/png');
+  r = await upload(`/catalog/products/${iphoneProductId}/images`, owner, PNG, 'p5.png', 'image/png');
+  check('limit of 4 photos per product', r.status === 400, r.data);
+  r = await call('GET', `/catalog/lookup?code=${imeiA}&branchId=${branchId}`, { token: cashier });
+  check('POS scan returns the cover photo', r.data.imageUrl === `/api/v1/files/${(await call('GET', `/catalog/products/${iphoneProductId}`, { token: owner })).data.images[0].url.split('/').pop()}`, r.data.imageUrl);
+  r = await call('DELETE', `/catalog/products/${iphoneProductId}/images/${img1.id}`, { token: owner });
+  f = await getBytes(img1.url, owner);
+  check('deleting a photo removes the file', r.status === 204 && f.status === 404, { del: r.status, get: f.status });
 
   // ── 3. Sales ──
   console.log('\nPOS & sales');
@@ -313,6 +361,9 @@ async function main() {
   check("another shop cannot see this shop's IMEIs", r.data.match === 'NONE', r.data);
   r = await call('POST', '/sales/invoices', { token: other, body: { branchId, lines: [{ imei: imeiB, qty: 1 }], payments: [] } });
   check("another shop cannot sell from this shop's branch", r.status === 403, r.data);
+  const coverUrl = (await call('GET', `/catalog/products/${iphoneProductId}`, { token: owner })).data.images[0].url;
+  f = await getBytes(coverUrl, other);
+  check("another shop cannot open this shop's product photos", f.status === 404, f.status);
   r = await call('GET', `/customers/${customer.id}`, { token: other });
   check("another shop cannot read this shop's customers", r.status === 404);
 

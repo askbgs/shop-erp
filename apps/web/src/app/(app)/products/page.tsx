@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useState } from 'react';
+import { ProductThumb } from '@/components/product-images';
 import { Badge, ButtonLink, Input, Loading, PageHeader, Pager, Panel, Table } from '@/components/ui';
 import { api, Paged, qs } from '@/lib/api';
 import { lkr } from '@/lib/format';
@@ -28,7 +29,12 @@ export default function ProductsPage() {
                 const prices = p.variants.map((v) => v.priceCents);
                 return (
                   <tr key={p.id}>
-                    <td><Link href={`/products/${p.id}`} className="font-semibold text-solder">{p.name}</Link>{p.model && <div className="text-xs text-ink-3">{p.model}</div>}</td>
+                    <td>
+                      <Link href={`/products/${p.id}`} className="flex items-center gap-3">
+                        <ProductThumb url={p.images?.[0]?.url} size={44} />
+                        <span><span className="block font-semibold text-solder">{p.name}</span>{p.model && <span className="block text-xs text-ink-3">{p.model}</span>}</span>
+                      </Link>
+                    </td>
                     <td>{p.brand?.name ?? '—'}</td>
                     <td><Badge tone={p.trackingType === 'SERIAL' ? 'info' : 'neutral'}>{TRACKING_LABEL[p.trackingType]}</Badge></td>
                     <td className="text-ink-2">{p.variants.map((v) => v.name).join(', ')}</td>

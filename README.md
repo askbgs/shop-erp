@@ -61,10 +61,15 @@ npm run dev                                  # http://localhost:3001
 | Repairs | Job list by status, intake form (accessories, condition, passcode, advance), job page with the station track, next-step buttons, parts, diagnosis, hand-over and payments |
 | Sales | Invoices by date, invoice detail, collect a balance, same-day void |
 | Stock | Levels with reorder flag and count correction, IMEI/serial search, old-stock ageing, deliveries; receive stock with IMEIs pasted one per line |
-| Products | Catalogue with options and prices, price editing |
+| Products | Catalogue with options and prices, price editing, up to 4 photos per product (cover shown in the list and at the POS) |
 | Customers | Search, add, 360° page with devices, warranties, invoices, repairs, points |
 | Settings | Shop (VAT, warranty, loyalty), staff with roles and PINs, branches, customer messages, plan |
 | /track | Public page where customers check a repair with its tracking code and their mobile number |
+
+**Product photos.** Add photos while creating a product or later on its page: drop, browse or paste.
+The browser shrinks each photo to at most 1200 px (WebP) before upload, and the API checks the real
+file type. Photos are stored in Cloudflare R2 when `R2_*` is set, otherwise in the database, and are
+always served through `/api/v1/files/:id` to signed-in staff of the same shop.
 
 **Sign-in carousel.** The login and sign-up pages are split screens: the form on one side and a
 carousel of four illustrated slides on the other (a compact version shows on phones). The slides
@@ -80,7 +85,7 @@ Run the tests:
 
 ```bash
 npm test                                     # unit tests (money/VAT, IMEI, repair workflow, dates)
-npm run smoke                                # 90 end-to-end checks against the running API
+npm run smoke                                # 101 end-to-end checks against the running API
 ```
 
 The smoke test registers a fresh demo shop each run and prints its login at the end.

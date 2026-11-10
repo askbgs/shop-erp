@@ -1,15 +1,17 @@
 'use client';
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useParams } from 'next/navigation';
-import { useState } from 'react';
+import { useParams, useSearchParams } from 'next/navigation';
+import { Suspense, useState } from 'react';
+import { PhotoPicker } from '@/components/product-images';
 import { Alert, Badge, Button, Field, Input, Loading, Modal, PageHeader, Panel, Table } from '@/components/ui';
 import { api } from '@/lib/api';
 import { centsToInput, lkr, toCents } from '@/lib/format';
+import { uploadProductImage } from '@/lib/image';
 import { useSession } from '@/lib/session';
 import { Product, TRACKING_LABEL, Variant } from '@/lib/types';
 
-export default function ProductPage() {
+function ProductInner() {
   const { id } = useParams<{ id: string }>();
   const { can } = useSession();
   const qc = useQueryClient();
@@ -17,6 +19,38 @@ export default function ProductPage() {
   const [edit, setEdit] = useState<Variant | null>(null);
   const [form, setForm] = useState({ price: '', minPrice: '', reorder: '', barcode: '' });
   const [error, setError] = useState('');
+  const [photoBusy, setPhotoBusy] = useState<string | null>(null);
+  const [photoError, setPhotoError] = useState('');
+  const failedOnCreate = Number(useSearchParams().get('photosFailed') ?? 0);
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['product', id] });
+    qc.invalidateQueries({ queryKey: ['products'] });
+  };
+
+  async function addPhotos(added: { blob: Blob; url: string }[]) {
+    setPhotoError('');
+    try {
+      for (const [n, a] of added.entries()) {
+        setPhotoBusy(`Uploading ${n + 1} of ${added.length}…`);
+        await uploadProductImage(id, a.blob);
+        URL.revokeObjectURL(a.url);
+      }
+    } catch (e) {
+      setPhotoError((e as Error).message);
+    } finally {
+      setPhotoBusy(null);
+      refresh();
+    }
+  }
+  async function photoAction(fn: () => Promise<unknown>) {
+    setPhotoError('');
+    try {
+      await fn();
+    } catch (e) {
+      setPhotoError((e as Error).message);
+    }
+    refresh();
+  }
 
   function open(v: Variant) {
     setEdit(v);
@@ -38,6 +72,20 @@ export default function ProductPage() {
   return (
     <>
       <PageHeader title={d.name} sub={[d.brand?.name, d.model, d.category?.name].filter(Boolean).join(', ')} actions={<Badge tone="info">{TRACKING_LABEL[d.trackingType]}</Badge>} />
+      <Panel title="Photos" className="mb-6">
+        {failedOnCreate > 0 && <div className="mb-3"><Alert tone="wait">{failedOnCreate} photo{failedOnCreate === 1 ? '' : 's'} did not upload. Add {failedOnCreate === 1 ? 'it' : 'them'} again below.</Alert></div>}
+        {photoError && <div className="mb-3"><Alert>{photoError}</Alert></div>}
+        <PhotoPicker
+          items={(d.images ?? []).map((i) => ({ key: i.id, url: i.url }))}
+          busy={photoBusy}
+          disabled={!can('catalog.manage')}
+          onAdd={addPhotos}
+          onRemove={(imageId) => photoAction(() => api.del(`/catalog/products/${id}/images/${imageId}`))}
+          onCover={(imageId) => photoAction(() => api.post(`/catalog/products/${id}/images/${imageId}/cover`))}
+        />
+        {!can('catalog.manage') && (d.images ?? []).length === 0 && <p className="text-sm text-ink-3">No photos yet.</p>}
+      </Panel>
+
       <Panel title="Options and prices" pad={false}>
         <Table head={['Option', 'SKU', 'Barcode', 'Price', 'Lowest price', ...(can('stock.view_cost') ? ['Last cost'] : []), 'Reorder at', '']}>
           {d.variants.map((v) => (
@@ -67,5 +115,13 @@ export default function ProductPage() {
         </div>
       </Modal>
     </>
+  );
+}
+
+export default function ProductPage() {
+  return (
+    <Suspense>
+      <ProductInner />
+    </Suspense>
   );
 }

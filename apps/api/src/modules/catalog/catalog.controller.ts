@@ -1,4 +1,6 @@
-import { BadRequestException, Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post, Query, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBody, ApiConsumes } from '@nestjs/swagger';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuthUser, hasPermission } from '../../common/auth-user';
 import { CurrentUser, RequireFeature, RequirePermissions } from '../../common/decorators';
@@ -7,6 +9,11 @@ import { paged, paging } from '../../common/pagination';
 import { FEATURES, PERMISSIONS } from '../../common/permissions';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../core/audit.service';
+import { fileUrl, MAX_IMAGE_BYTES, StorageService } from '../storage/storage.module';
+
+export const MAX_PRODUCT_IMAGES = 4;
+const IMAGES = { orderBy: [{ sortOrder: 'asc' as const }, { createdAt: 'asc' as const }], select: { id: true, fileId: true } };
+const withUrls = <T extends { images: { id: string; fileId: string }[] }>(p: T) => ({ ...p, images: p.images.map((i) => ({ id: i.id, url: fileUrl(i.fileId) })) });
 import { CreateProductDto, NameDto, ProductQuery, UpdateProductDto, UpdateVariantDto, VariantDto } from './catalog.dto';
 
 @ApiTags('Catalog')
@@ -14,7 +21,7 @@ import { CreateProductDto, NameDto, ProductQuery, UpdateProductDto, UpdateVarian
 @RequireFeature(FEATURES.INVENTORY)
 @Controller('catalog')
 export class CatalogController {
-  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) {}
+  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService, private readonly storage: StorageService) {}
 
   // ── Categories & brands ──
   @Get('categories')
@@ -73,13 +80,13 @@ export class CatalogController {
     const [items, total] = await Promise.all([
       this.prisma.product.findMany({
         where,
-        include: { brand: true, category: true, variants: { where: { isActive: true }, orderBy: { name: 'asc' } } },
+        include: { brand: true, category: true, variants: { where: { isActive: true }, orderBy: { name: 'asc' } }, images: IMAGES },
         orderBy: { name: 'asc' },
         ...paging(q),
       }),
       this.prisma.product.count({ where }),
     ]);
-    return paged(items.map((p) => this.hideCost(user, p)), total, q);
+    return paged(items.map((p) => withUrls(this.hideCost(user, p))), total, q);
   }
 
   @Get('products/:id')
@@ -87,9 +94,9 @@ export class CatalogController {
   async product(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
     const p = await this.prisma.product.findFirstOrThrow({
       where: { id, tenantId: user.tenantId },
-      include: { brand: true, category: true, variants: { orderBy: { name: 'asc' } } },
+      include: { brand: true, category: true, variants: { orderBy: { name: 'asc' } }, images: IMAGES },
     });
-    return this.hideCost(user, p);
+    return withUrls(this.hideCost(user, p));
   }
 
   @Post('products')
@@ -164,6 +171,46 @@ export class CatalogController {
     await this.prisma.productVariant.update({ where: { id }, data: { isActive: false } });
   }
 
+  // ── Product images ──
+  /** Upload one photo (multipart field "file", JPEG/PNG/WebP, max 3 MB). The first photo becomes the cover. */
+  @Post('products/:id/images')
+  @RequirePermissions(PERMISSIONS.CATALOG_MANAGE)
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({ schema: { type: 'object', properties: { file: { type: 'string', format: 'binary' } } } })
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_IMAGE_BYTES, files: 1 } }))
+  async addImage(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @UploadedFile() file?: Express.Multer.File) {
+    await this.prisma.product.findFirstOrThrow({ where: { id, tenantId: user.tenantId } });
+    if (!file) throw new BadRequestException('Attach an image in the "file" field');
+    const image = await this.prisma.tx(async (tx) => {
+      const count = await tx.productImage.count({ where: { productId: id } });
+      if (count >= MAX_PRODUCT_IMAGES) throw new BadRequestException(`A product can have up to ${MAX_PRODUCT_IMAGES} photos`);
+      const last = await tx.productImage.findFirst({ where: { productId: id }, orderBy: { sortOrder: 'desc' } });
+      const stored = await this.storage.saveImage(tx, user.tenantId, file.buffer, 'products');
+      return tx.productImage.create({ data: { tenantId: user.tenantId, productId: id, fileId: stored.id, sortOrder: (last?.sortOrder ?? -1) + 1 } });
+    });
+    return { id: image.id, url: fileUrl(image.fileId) };
+  }
+
+  @Delete('products/:id/images/:imageId')
+  @HttpCode(204)
+  @RequirePermissions(PERMISSIONS.CATALOG_MANAGE)
+  async removeImage(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Param('imageId', ParseUUIDPipe) imageId: string) {
+    const img = await this.prisma.productImage.findFirstOrThrow({ where: { id: imageId, productId: id, tenantId: user.tenantId }, include: { file: { select: { r2Key: true } } } });
+    await this.prisma.storedFile.delete({ where: { id: img.fileId } }); // cascades to the image row
+    await this.storage.removeBlob(img.file.r2Key);
+  }
+
+  /** Make this photo the cover (shown in lists and at the POS). */
+  @Post('products/:id/images/:imageId/cover')
+  @HttpCode(204)
+  @RequirePermissions(PERMISSIONS.CATALOG_MANAGE)
+  async setCover(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Param('imageId', ParseUUIDPipe) imageId: string) {
+    await this.prisma.productImage.findFirstOrThrow({ where: { id: imageId, productId: id, tenantId: user.tenantId } });
+    const all = await this.prisma.productImage.findMany({ where: { productId: id }, orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }] });
+    const order = [imageId, ...all.map((i) => i.id).filter((x) => x !== imageId)];
+    await this.prisma.$transaction(order.map((imgId, n) => this.prisma.productImage.update({ where: { id: imgId }, data: { sortOrder: n } })));
+  }
+
   /**
    * POS scan lookup: one code that may be an IMEI, serial, barcode or SKU.
    * An IMEI/serial match returns the exact stock unit so the POS can sell that unit.
@@ -175,21 +222,27 @@ export class CatalogController {
     const c = normalizeImei(code.trim());
     const unit = await this.prisma.stockUnit.findFirst({
       where: { tenantId: user.tenantId, OR: [{ imei1: c }, { imei2: c }, { serial: code.trim() }] },
-      include: { variant: { include: { product: true } } },
+      include: { variant: { include: { product: { include: { images: { ...IMAGES, take: 1 } } } } } },
     });
     if (unit) {
       return {
         match: 'UNIT' as const,
         unit: { ...unit, costCents: hasPermission(user, PERMISSIONS.STOCK_VIEW_COST) ? unit.costCents : undefined },
+        imageUrl: unit.variant.product.images[0] ? fileUrl(unit.variant.product.images[0].fileId) : null,
         sellable: unit.status === 'IN_STOCK' && (!branchId || unit.branchId === branchId),
         priceCents: unit.priceCents ?? unit.variant.priceCents,
       };
     }
     const variant = await this.prisma.productVariant.findFirst({
       where: { tenantId: user.tenantId, isActive: true, OR: [{ barcode: code.trim() }, { sku: code.trim() }] },
-      include: { product: true, balances: branchId ? { where: { branchId } } : false },
+      include: { product: { include: { images: { ...IMAGES, take: 1 } } }, balances: branchId ? { where: { branchId } } : false },
     });
-    if (variant) return { match: 'VARIANT' as const, variant: this.hideVariantCost(user, variant), priceCents: variant.priceCents };
+    if (variant) {
+      return {
+        match: 'VARIANT' as const, variant: this.hideVariantCost(user, variant), priceCents: variant.priceCents,
+        imageUrl: variant.product.images[0] ? fileUrl(variant.product.images[0].fileId) : null,
+      };
+    }
     return { match: 'NONE' as const };
   }
 

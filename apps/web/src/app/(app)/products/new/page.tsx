@@ -3,9 +3,11 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { FormEvent, useState } from 'react';
+import { PhotoItem, PhotoPicker } from '@/components/product-images';
 import { Alert, Button, Field, Input, PageHeader, Panel, Select } from '@/components/ui';
 import { api } from '@/lib/api';
 import { toCents } from '@/lib/format';
+import { uploadProductImage } from '@/lib/image';
 import { Product } from '@/lib/types';
 
 interface VariantRow {
@@ -28,8 +30,10 @@ export default function NewProductPage() {
   const [variants, setVariants] = useState<VariantRow[]>([blank()]);
   const [newBrand, setNewBrand] = useState('');
   const [newCat, setNewCat] = useState('');
+  const [photos, setPhotos] = useState<PhotoItem[]>([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState('');
 
   async function addRef(kind: 'brands' | 'categories', name: string) {
     const r = await api.post<{ id: string }>(`/catalog/${kind}`, { name });
@@ -61,10 +65,22 @@ export default function NewProductPage() {
           reorderLevel: v.reorder ? Number(v.reorder) : undefined,
         })),
       });
-      router.replace(`/products/${p.id}`);
+      // Photos upload after the product exists; one failed photo does not lose the product.
+      let failed = 0;
+      for (const [n, ph] of photos.entries()) {
+        setProgress(`Uploading photo ${n + 1} of ${photos.length}…`);
+        try {
+          await uploadProductImage(p.id, ph.blob!);
+        } catch {
+          failed++;
+        }
+      }
+      photos.forEach((ph) => URL.revokeObjectURL(ph.url));
+      router.replace(`/products/${p.id}${failed ? `?photosFailed=${failed}` : ''}`);
     } catch (err) {
       setError((err as Error).message);
       setBusy(false);
+      setProgress('');
     }
   }
 
@@ -115,6 +131,17 @@ export default function NewProductPage() {
           </div>
         </Panel>
 
+        <Panel title="Photos">
+          <PhotoPicker
+            items={photos}
+            onAdd={(added) => setPhotos((ps) => [...ps, ...added.map((a, n) => ({ key: `${Date.now()}-${n}`, url: a.url, blob: a.blob }))])}
+            onRemove={(key) => setPhotos((ps) => { const gone = ps.find((x) => x.key === key); if (gone) URL.revokeObjectURL(gone.url); return ps.filter((x) => x.key !== key); })}
+            onCover={(key) => setPhotos((ps) => [ps.find((x) => x.key === key)!, ...ps.filter((x) => x.key !== key)])}
+            disabled={busy}
+          />
+          <p className="mt-3 text-sm text-ink-3">The cover photo shows in the product list and at the point of sale. Photos are resized to save data.</p>
+        </Panel>
+
         <Panel title="Options and prices" actions={<Button size="sm" onClick={() => setVariants([...variants, blank()])}>Add an option</Button>}>
           <p className="mb-3 text-sm text-ink-2">One row per storage size, colour or model that has its own price.</p>
           <div className="space-y-3">
@@ -134,6 +161,7 @@ export default function NewProductPage() {
         <Alert>{error}</Alert>
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={() => router.back()}>Cancel</Button>
+          {progress && <span className="self-center text-sm text-ink-2" role="status">{progress}</span>}
           <Button type="submit" variant="primary" size="lg" loading={busy}>Save product</Button>
         </div>
       </div>
