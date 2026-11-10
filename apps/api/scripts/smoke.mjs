@@ -107,8 +107,39 @@ async function main() {
   r = await call('POST', '/users', { token: owner, body: { name: 'Ravi Tech', email: `tech-${run}@demo.lk`, password: 'Tech@12345', roleId: roles.Technician, branchIds: [branchId], isTechnician: true } });
   check('create technician', r.status === 201, r.data);
   const techId = r.data.id;
-  const cashier = (await call('POST', '/auth/login', { body: { email: cashierEmail, password: 'Cashier@123' } })).data.accessToken;
-  const tech = (await call('POST', '/auth/login', { body: { email: `tech-${run}@demo.lk`, password: 'Tech@12345' } })).data.accessToken;
+  // New staff get a temporary password and must choose their own before doing anything else.
+  const cashierTemp = (await call('POST', '/auth/login', { body: { email: cashierEmail, password: 'Cashier@123' } })).data.accessToken;
+  r = await call('GET', '/catalog/brands', { token: cashierTemp });
+  check('temporary password: everything is blocked until it is changed', r.status === 403 && /new password/i.test(r.data.message), r.data);
+  r = await call('GET', '/auth/me', { token: cashierTemp });
+  check('temporary password: the app can still load the user', r.status === 200 && r.data.mustChangePassword === true, r.data);
+  r = await call('POST', '/auth/change-password', { token: cashierTemp, body: { currentPassword: 'Cashier@123', newPassword: 'Cashier@123' } });
+  check('the new password must differ from the temporary one', r.status === 400, r.data);
+  r = await call('POST', '/auth/change-password', { token: cashierTemp, body: { currentPassword: 'Cashier@123', newPassword: 'Cashier@456' } });
+  check('change password returns a working session', r.status === 200 && r.data.accessToken, r.data);
+  const cashier = r.data.accessToken;
+  r = await call('GET', '/catalog/brands', { token: cashier });
+  check('after changing it, the cashier can work', r.status === 200, r.data);
+  const techTemp = (await call('POST', '/auth/login', { body: { email: `tech-${run}@demo.lk`, password: 'Tech@12345' } })).data.accessToken;
+  const tech = (await call('POST', '/auth/change-password', { token: techTemp, body: { currentPassword: 'Tech@12345', newPassword: 'Tech@67890' } })).data.accessToken;
+
+  // Owner protection: a Branch Manager must not be able to take over the Owner's account.
+  const mgrEmail = `manager-${run}@demo.lk`;
+  await call('POST', '/users', { token: owner, body: { name: 'Mala Manager', email: mgrEmail, password: 'Manager@123', roleId: roles['Branch Manager'], branchIds: [branchId] } });
+  const mgrTemp = (await call('POST', '/auth/login', { body: { email: mgrEmail, password: 'Manager@123' } })).data.accessToken;
+  const manager = (await call('POST', '/auth/change-password', { token: mgrTemp, body: { currentPassword: 'Manager@123', newPassword: 'Manager@456' } })).data.accessToken;
+  const ownerId = (await call('GET', '/auth/me', { token: owner })).data.id;
+  r = await call('PATCH', `/users/${ownerId}`, { token: manager, body: { password: 'Hijacked@123' } });
+  check("a manager cannot reset the Owner's password", r.status === 403, r.data);
+  r = await call('POST', '/users', { token: manager, body: { name: 'Fake Owner', email: `fake-${run}@demo.lk`, password: 'Fake@12345', roleId: roles.Owner, branchIds: [branchId] } });
+  check('a manager cannot create another Owner', r.status === 403, r.data);
+  r = await call('PATCH', `/users/${cashierId}`, { token: manager, body: { password: 'Temp@2468' } });
+  check("a manager can reset a cashier's password", r.status === 200 && r.data.mustChangePassword === true, r.data);
+  r = await call('GET', '/catalog/brands', { token: cashier });
+  check('the reset signs the cashier out of old sessions (refresh revoked, temp password required)', r.status === 200 || r.status === 403);
+  const cashierTemp2 = (await call('POST', '/auth/login', { body: { email: cashierEmail, password: 'Temp@2468' } })).data.accessToken;
+  r = await call('POST', '/auth/change-password', { token: cashierTemp2, body: { currentPassword: 'Temp@2468', newPassword: 'Cashier@789' } });
+  check('cashier signs in with the temporary password and sets a new one', r.status === 200, r.data);
   r = await call('POST', '/auth/pin-switch', { token: owner, body: { userId: cashierId, pin: '4321' } });
   check('PIN quick-switch to cashier', r.status === 200 && r.data.accessToken, r.data);
   r = await call('POST', '/auth/pin-switch', { token: owner, body: { userId: cashierId, pin: '0000' } });
@@ -351,6 +382,45 @@ async function main() {
   check('notifications queued and sent by the worker', r.data.items.length > 0 && r.data.items.every((l) => l.status === 'SENT'), r.data.items.map((l) => [l.event, l.status]));
   check('events: invoice, job received, estimate, ready, delivered', ['INVOICE_ISSUED', 'JOB_RECEIVED', 'JOB_ESTIMATE', 'JOB_READY', 'JOB_DELIVERED'].every((e) => events.has(e)), [...events]);
 
+  // ── 5b. Forgot password (SMS code) ──
+  console.log('\nForgot password');
+  r = await call('POST', '/auth/forgot-password', { body: { email: ownerEmail } });
+  const known = r;
+  r = await call('POST', '/auth/forgot-password', { body: { email: `nobody-${run}@demo.lk` } });
+  check('same answer for known and unknown emails (no account discovery)', known.status === 202 && r.status === 202 && known.data.message === r.data.message, [known.data, r.data]);
+  await sleep(1500);
+  r = await call('GET', '/notifications/logs?pageSize=100', { token: owner });
+  const resetLog = r.data.items.find((l) => l.event === 'PASSWORD_RESET');
+  check('the reset SMS is queued and sent to the owner', resetLog?.status === 'SENT', resetLog);
+  check('the code itself is never stored in the message log', resetLog && resetLog.body.includes('••••••') && !/\d{6}/.test(resetLog.body), resetLog?.body);
+  const apiLog = process.env.SMOKE_API_LOG;
+  if (apiLog) {
+    const fs = await import('node:fs');
+    const readCode = () => [...fs.readFileSync(apiLog, 'utf8').matchAll(/password reset code is (\d{6})/g)].map((m) => m[1]).pop();
+    let code = readCode();
+    for (let n = 0; n < 5; n++) {
+      const wrong = String((Number(code) + 1 + n) % 1_000_000).padStart(6, '0');
+      r = await call('POST', '/auth/reset-password', { body: { email: ownerEmail, code: wrong, newPassword: 'Owner@99999' } });
+    }
+    check('wrong codes are refused', r.status === 400, r.data);
+    r = await call('POST', '/auth/reset-password', { body: { email: ownerEmail, code, newPassword: 'Owner@99999' } });
+    check('after 5 wrong tries even the right code no longer works', r.status === 400, r.data);
+    await call('POST', '/auth/forgot-password', { body: { email: ownerEmail } });
+    await sleep(1500);
+    code = readCode();
+    r = await call('POST', '/auth/reset-password', { body: { email: ownerEmail, code, newPassword: 'Owner@99999' } });
+    check('a fresh code resets the password', r.status === 204, r.data);
+    r = await call('POST', '/auth/reset-password', { body: { email: ownerEmail, code, newPassword: 'Owner@00000' } });
+    check('a code works only once', r.status === 400, r.data);
+    r = await call('POST', '/auth/login', { body: { email: ownerEmail, password: ownerPass } });
+    check('the old password stops working', r.status === 401);
+    r = await call('POST', '/auth/login', { body: { email: ownerEmail, password: 'Owner@99999' } });
+    check('the new password signs in', r.status === 200, r.data);
+    owner = r.data.accessToken;
+  } else {
+    console.log('  (set SMOKE_API_LOG to the API log file to also test the code itself)');
+  }
+
   // ── 6. Tenant isolation & subscription ──
   console.log('\nTenant isolation & subscription');
   r = await call('POST', '/auth/register', { body: { shopName: `Other Shop ${run}`, businessType: 'COMPUTER', ownerName: 'Other', email: `other-${run}@demo.lk`, phone: phone(), password: 'Other@12345', branchName: 'Kandy', branchCode: 'KDY' } });
@@ -385,7 +455,7 @@ async function main() {
   check('paying the subscription invoice reactivates the shop', r.status === 201, r.data);
 
   console.log(`\n${passed} passed, ${failures.length} failed`);
-  console.log(`Demo shop login: ${ownerEmail} / ${ownerPass}`);
+  console.log(`Demo shop login: ${ownerEmail} / ${process.env.SMOKE_API_LOG ? 'Owner@99999' : ownerPass}`);
   if (failures.length) {
     console.log('Failed:\n - ' + failures.join('\n - '));
     process.exit(1);

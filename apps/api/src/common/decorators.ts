@@ -22,3 +22,7 @@ export const ClientIp = createParamDecorator((_: unknown, ctx: ExecutionContext)
   const req = ctx.switchToHttp().getRequest();
   return (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip;
 });
+
+export const ALLOW_TEMP_PASSWORD = 'allowTempPassword';
+/** Route stays usable while the user still has a temporary password (me, change password, sessions). */
+export const AllowWithTemporaryPassword = () => SetMetadata(ALLOW_TEMP_PASSWORD, true);

@@ -6,7 +6,7 @@ import {
 export const dynamic = 'force-dynamic';
 
 // Token-issuing endpoints go through /api/auth/* so tokens never reach browser JavaScript.
-const BLOCKED = /^auth\/(login|register|refresh|logout|pin-switch)$/;
+const BLOCKED = /^auth\/(login|register|refresh|logout|pin-switch|change-password)$/;
 // Upstream headers that must not be copied onto our response.
 const HOP = new Set(['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'keep-alive', 'set-cookie']);
 

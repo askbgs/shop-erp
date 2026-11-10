@@ -42,7 +42,7 @@ export const api = {
   post: <T>(path: string, body?: unknown) => request<T>(`/api/v1${path}`, 'POST', body ?? {}),
   patch: <T>(path: string, body: unknown) => request<T>(`/api/v1${path}`, 'PATCH', body),
   del: <T>(path: string) => request<T>(`/api/v1${path}`, 'DELETE'),
-  auth: <T>(action: 'login' | 'register' | 'logout' | 'refresh' | 'pin-switch', body?: unknown) => request<T>(`/api/auth/${action}`, 'POST', body ?? {}),
+  auth: <T>(action: 'login' | 'register' | 'logout' | 'refresh' | 'pin-switch' | 'change-password', body?: unknown) => request<T>(`/api/auth/${action}`, 'POST', body ?? {}),
 };
 
 export function qs(params: Record<string, string | number | boolean | undefined | null>): string {

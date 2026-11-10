@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeftRight, Boxes, LayoutDashboard, LogOut, LucideIcon, Menu, Package, ReceiptText, ScanBarcode, Settings, Store, Users, Wrench, X } from 'lucide-react';
+import { ArrowLeftRight, Boxes, KeyRound, LayoutDashboard, LogOut, LucideIcon, Menu, Package, ReceiptText, ScanBarcode, Settings, Store, Users, Wrench, X } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { ReactNode, useEffect, useState } from 'react';
@@ -41,6 +41,12 @@ export function Shell({ children }: { children: ReactNode }) {
   const [pinOpen, setPinOpen] = useState(false);
 
   useEffect(() => setMenu(false), [path]);
+
+  // A temporary password must be replaced before anything else.
+  const mustChange = me.mustChangePassword && path !== '/account/password';
+  useEffect(() => {
+    if (mustChange) router.replace('/account/password');
+  }, [mustChange, router]);
 
   const items = NAV.filter((n) => can(n.perm) && (!n.feature || has(n.feature)));
   const trialDays = me.tenant.trialEndsAt ? Math.ceil((new Date(me.tenant.trialEndsAt).getTime() - Date.now()) / 86_400_000) : null;
@@ -111,7 +117,10 @@ export function Shell({ children }: { children: ReactNode }) {
             <div className="text-xs text-night-3">{me.role.name}</div>
           </div>
         </div>
-        <div className="mt-3 grid grid-cols-2 gap-2">
+        <Link href="/account/password" className="mt-3 flex h-9 items-center gap-1.5 rounded-ctl px-2 text-sm font-semibold text-night-3 hover:bg-white/8 hover:text-white">
+          <KeyRound className="size-4" /> Change password
+        </Link>
+        <div className="mt-1 grid grid-cols-2 gap-2">
           <button type="button" onClick={() => setPinOpen(true)} className="flex h-9 items-center justify-center gap-1.5 rounded-ctl bg-white/8 text-sm font-semibold text-white hover:bg-white/15">
             <ArrowLeftRight className="size-4" /> Switch
           </button>
@@ -155,7 +164,7 @@ export function Shell({ children }: { children: ReactNode }) {
             {trialDays > 0 ? `Your free trial ends in ${trialDays} day${trialDays === 1 ? '' : 's'}.` : 'Your free trial has ended.'} Contact us to choose a plan.
           </div>
         )}
-        <main className="mx-auto max-w-[1400px] px-4 py-6 sm:px-6 lg:px-10 lg:py-8">{children}</main>
+        <main className="mx-auto max-w-[1400px] px-4 py-6 sm:px-6 lg:px-10 lg:py-8">{mustChange ? null : children}</main>
       </div>
 
       <PinSwitch open={pinOpen} onClose={() => setPinOpen(false)} />

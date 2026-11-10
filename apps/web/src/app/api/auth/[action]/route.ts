@@ -36,9 +36,9 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
     return res;
   }
 
-  const target = { login: 'auth/login', register: 'auth/register', 'pin-switch': 'auth/pin-switch' }[action];
+  const target = { login: 'auth/login', register: 'auth/register', 'pin-switch': 'auth/pin-switch', 'change-password': 'auth/change-password' }[action];
   if (!target) return NextResponse.json({ statusCode: 404, message: 'Not found' }, { status: 404 });
-  if (action === 'pin-switch') {
+  if (action === 'pin-switch' || action === 'change-password') {
     const access = req.cookies.get(ACCESS_COOKIE)?.value;
     if (access) headers.authorization = `Bearer ${access}`;
   }

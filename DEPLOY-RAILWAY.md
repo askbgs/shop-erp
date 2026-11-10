@@ -137,6 +137,10 @@ WHATSAPP_WEBHOOK_URL=https://<your-n8n>/webhook/whatsapp # receives POST {to, me
 WHATSAPP_WEBHOOK_TOKEN=<token>
 ```
 
+**Password reset codes are sent by SMS**, so set up the SMS gateway before shops rely on
+*Forgot password?*. Until then, an owner can still give staff a temporary password in
+Settings, under Staff.
+
 Messages that fail are retried 3 times; every message is listed under **Settings → Customer messages**
 in the app and in the `notification_logs` table.
 

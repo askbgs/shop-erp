@@ -10,7 +10,7 @@ import { AuditService } from '../core/audit.service';
 import { CreateRoleDto, CreateUserDto, UpdateRoleDto, UpdateUserDto } from './platform.dto';
 
 const USER_SELECT = {
-  id: true, name: true, email: true, phone: true, isActive: true, isTechnician: true, lastLoginAt: true, createdAt: true,
+  id: true, name: true, email: true, phone: true, isActive: true, isTechnician: true, mustChangePassword: true, lastLoginAt: true, createdAt: true,
   role: { select: { id: true, name: true } },
   branches: { select: { branchId: true } },
 } as const;
@@ -58,6 +58,7 @@ export class UsersController {
   @RequirePermissions(PERMISSIONS.USER_MANAGE)
   async create(@CurrentUser() user: AuthUser, @Body() dto: CreateUserDto) {
     await this.checkRoleAndBranches(user, dto.roleId, dto.branchIds);
+    await this.assertMayGrantRole(user, dto.roleId);
     const sub = await this.prisma.subscription.findUnique({ where: { tenantId: user.tenantId }, include: { plan: true } });
     const count = await this.prisma.user.count({ where: { tenantId: user.tenantId, isActive: true } });
     if (sub && count >= sub.plan.maxUsers) throw new ForbiddenException(`Your plan allows ${sub.plan.maxUsers} active users`);
@@ -71,6 +72,7 @@ export class UsersController {
         roleId: dto.roleId,
         isTechnician: dto.isTechnician ?? false,
         passwordHash: await bcrypt.hash(dto.password, 12),
+        mustChangePassword: true, // the person who created the account knows this password
         pinHash: dto.pin ? await bcrypt.hash(dto.pin, 10) : null,
         branches: { createMany: { data: dto.branchIds.map((branchId) => ({ branchId })) } },
       },
@@ -84,7 +86,10 @@ export class UsersController {
   @RequirePermissions(PERMISSIONS.USER_MANAGE)
   async update(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateUserDto) {
     const target = await this.prisma.user.findFirstOrThrow({ where: { id, tenantId: user.tenantId }, include: { role: true, branches: true } });
+    // Only an Owner can change an Owner's account (password, PIN, role, status), so a manager cannot take over the shop.
+    if (target.role.isSystem && user.roleName !== 'Owner') throw new ForbiddenException("Only an Owner can change an Owner's account");
     if (dto.roleId || dto.branchIds) await this.checkRoleAndBranches(user, dto.roleId ?? target.roleId, dto.branchIds ?? []);
+    if (dto.roleId && dto.roleId !== target.roleId) await this.assertMayGrantRole(user, dto.roleId);
     if (target.role.name === 'Owner' && (dto.isActive === false || (dto.roleId && dto.roleId !== target.roleId))) {
       const owners = await this.prisma.user.count({ where: { tenantId: user.tenantId, roleId: target.roleId, isActive: true } });
       if (owners <= 1) throw new BadRequestException('The last active Owner cannot be deactivated or moved to another role');
@@ -105,6 +110,8 @@ export class UsersController {
           isActive: dto.isActive,
           pinHash: dto.pin ? await bcrypt.hash(dto.pin, 10) : undefined,
           passwordHash: dto.password ? await bcrypt.hash(dto.password, 12) : undefined,
+          // A password set by someone else is temporary: the person must choose their own at next sign-in.
+          mustChangePassword: dto.password ? id !== user.userId : undefined,
         },
         select: USER_SELECT,
       });
@@ -113,13 +120,19 @@ export class UsersController {
       }
       const { password, pin, ...safe } = dto;
       await this.audit.log({
-        tenantId: user.tenantId, userId: user.userId, action: 'user.update', entity: 'User', entityId: id,
+        tenantId: user.tenantId, userId: user.userId, action: password ? 'user.password_reset' : 'user.update', entity: 'User', entityId: id,
         before: { roleId: target.roleId, isActive: target.isActive, branchIds: target.branches.map((b) => b.branchId) },
         after: { ...safe, passwordChanged: !!password, pinChanged: !!pin },
       }, tx);
       return u;
     });
     return updated;
+  }
+
+  /** Only an Owner may give someone the Owner role. */
+  private async assertMayGrantRole(user: AuthUser, roleId: string) {
+    const role = await this.prisma.role.findFirst({ where: { id: roleId, tenantId: user.tenantId } });
+    if (role?.isSystem && user.roleName !== 'Owner') throw new ForbiddenException('Only an Owner can make someone an Owner');
   }
 
   private async checkRoleAndBranches(user: AuthUser, roleId: string, branchIds: string[]) {

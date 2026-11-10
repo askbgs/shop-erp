@@ -9,6 +9,7 @@ export interface Me {
   name: string;
   email: string;
   isTechnician: boolean;
+  mustChangePassword: boolean;
   role: { id: string; name: string };
   tenant: { id: string; name: string; businessType: string; status: string; trialEndsAt: string | null };
   branches: { id: string; name: string; code: string }[];

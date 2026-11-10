@@ -9,7 +9,9 @@ import { api } from '@/lib/api';
 
 function LoginForm() {
   const router = useRouter();
-  const next = useSearchParams().get('next') || '/dashboard';
+  const params = useSearchParams();
+  const next = params.get('next') || '/dashboard';
+  const notice = params.get('reset') === '1' ? 'Password changed. Sign in with your new password.' : '';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -33,13 +35,21 @@ function LoginForm() {
       <h1 className="text-[2rem] leading-tight font-bold tracking-tight">Welcome back</h1>
       <p className="mt-2 text-ink-2">Sign in to open your shop.</p>
       <form onSubmit={submit} className="mt-8 space-y-5">
+        {notice && !error && <Alert tone="good">{notice}</Alert>}
         <Alert>{error}</Alert>
         <Field label="Email">
           <Input type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} autoFocus placeholder="you@yourshop.lk" />
         </Field>
-        <Field label="Password">
-          <PasswordInput autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
-        </Field>
+        <div>
+          <Field label="Password">
+            <PasswordInput autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
+          </Field>
+          <div className="mt-2 text-right">
+            <Link href={`/forgot-password${email ? `?email=${encodeURIComponent(email)}` : ''}`} className="text-sm font-semibold text-solder underline-offset-4 hover:underline">
+              Forgot password?
+            </Link>
+          </div>
+        </div>
         <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy}>
           Sign in
         </Button>

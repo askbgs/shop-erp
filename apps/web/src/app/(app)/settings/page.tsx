@@ -112,7 +112,14 @@ function ShopSettings() {
   );
 }
 
-interface User { id: string; name: string; email: string; phone: string | null; isActive: boolean; isTechnician: boolean; lastLoginAt: string | null; role: { id: string; name: string }; branches: { branchId: string }[] }
+interface User { id: string; name: string; email: string; phone: string | null; isActive: boolean; isTechnician: boolean; mustChangePassword: boolean; lastLoginAt: string | null; role: { id: string; name: string }; branches: { branchId: string }[] }
+
+/** Readable temporary password: no 0/O or 1/l/I, easy to read out at the counter. */
+function tempPassword() {
+  const a = 'abcdefghjkmnpqrstuvwxyz', A = 'ABCDEFGHJKMNPQRSTUVWXYZ', d = '23456789';
+  const pick = (set: string) => set[crypto.getRandomValues(new Uint32Array(1))[0] % set.length];
+  return [pick(A), pick(a), pick(a), pick(a), '-', pick(d), pick(d), pick(d), pick(d), '-', pick(A), pick(a)].join('');
+}
 interface Role { id: string; name: string; maxDiscountBp: number; _count: { users: number } }
 
 function Staff() {
@@ -123,6 +130,7 @@ function Staff() {
   const [open, setOpen] = useState(false);
   const [f, setF] = useState({ name: '', email: '', phone: '', password: '', roleId: '', pin: '', isTechnician: false, branchIds: [] as string[] });
   const [error, setError] = useState('');
+  const [resetFor, setResetFor] = useState<User | null>(null);
   async function create() {
     setError('');
     try {
@@ -140,21 +148,32 @@ function Staff() {
   function alertError(e: Error) { setError(e.message); }
   const branchName = (id: string) => me.branches.find((b) => b.id === id)?.code ?? '';
   return (
-    <Panel title="Staff" actions={can('user.manage') && <Button size="sm" variant="primary" onClick={() => { setOpen(true); setF({ name: '', email: '', phone: '', password: '', roleId: roles.data?.find((r) => r.name === 'Cashier')?.id ?? '', pin: '', isTechnician: false, branchIds: me.branches.map((b) => b.id) }); }}>Add staff member</Button>} pad={false}>
+    <Panel title="Staff" actions={can('user.manage') && <Button size="sm" variant="primary" onClick={() => { setOpen(true); setF({ name: '', email: '', phone: '', password: tempPassword(), roleId: roles.data?.find((r) => r.name === 'Cashier')?.id ?? '', pin: '', isTechnician: false, branchIds: me.branches.map((b) => b.id) }); }}>Add staff member</Button>} pad={false}>
       {error && !open && <div className="p-3"><Alert>{error}</Alert></div>}
       {!users.data ? <Loading /> : (
         <Table head={['Name', 'Role', 'Branches', 'Last sign-in', '']}>
           {users.data.items.map((u) => (
             <tr key={u.id} className={u.isActive ? '' : 'opacity-60'}>
-              <td><div className="font-semibold">{u.name}{u.isTechnician && <span className="ml-2"><Badge tone="info">Technician</Badge></span>}</div><div className="text-xs text-ink-3">{u.email}</div></td>
+              <td>
+                <div className="font-semibold">{u.name}{u.isTechnician && <span className="ml-2"><Badge tone="info">Technician</Badge></span>}{u.mustChangePassword && <span className="ml-2"><Badge tone="wait">Temporary password</Badge></span>}</div>
+                <div className="text-xs text-ink-3">{u.email}</div>
+              </td>
               <td>{u.role.name}</td>
               <td className="code text-ink-2">{u.role.name === 'Owner' ? 'All' : u.branches.map((b) => branchName(b.branchId)).join(', ')}</td>
               <td className="text-ink-3">{u.lastLoginAt ? date(u.lastLoginAt) : 'Never'}</td>
-              <td className="text-right">{can('user.manage') && u.id !== me.id && <button type="button" className="text-sm font-semibold text-solder underline" onClick={() => toggle(u)}>{u.isActive ? 'Deactivate' : 'Reactivate'}</button>}</td>
+              <td className="whitespace-nowrap text-right">
+                {can('user.manage') && u.id !== me.id && (u.role.name !== 'Owner' || me.role.name === 'Owner') && (
+                  <>
+                    <button type="button" className="mr-4 text-sm font-semibold text-solder underline" onClick={() => setResetFor(u)}>Reset password</button>
+                    <button type="button" className="text-sm font-semibold text-ink-3 underline" onClick={() => toggle(u)}>{u.isActive ? 'Deactivate' : 'Reactivate'}</button>
+                  </>
+                )}
+              </td>
             </tr>
           ))}
         </Table>
       )}
+      <ResetPassword user={resetFor} onClose={() => setResetFor(null)} onDone={() => qc.invalidateQueries({ queryKey: ['users'] })} />
       <Modal open={open} title="Add a staff member" onClose={() => setOpen(false)} wide footer={<><Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button><Button variant="primary" onClick={create} disabled={!f.name || !f.email || f.password.length < 8 || !f.roleId}>Add staff member</Button></>}>
         <div className="space-y-3">
           <Alert>{error}</Alert>
@@ -162,7 +181,12 @@ function Staff() {
             <Field label="Name"><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} autoFocus /></Field>
             <Field label="Email (used to sign in)"><Input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
             <Field label="Mobile"><Input inputMode="tel" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
-            <Field label="Password" hint="At least 8 characters"><Input type="password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} autoComplete="new-password" /></Field>
+            <Field label="Temporary password" hint="They choose their own at first sign-in">
+              <div className="flex gap-2">
+                <Input value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} autoComplete="off" className="code" />
+                <Button onClick={() => setF({ ...f, password: tempPassword() })}>Generate</Button>
+              </div>
+            </Field>
             <Field label="Role">
               <Select value={f.roleId} onChange={(e) => setF({ ...f, roleId: e.target.value })}>
                 <option value="">Choose…</option>
@@ -189,6 +213,62 @@ function Staff() {
         </div>
       </Modal>
     </Panel>
+  );
+}
+
+function ResetPassword({ user, onClose, onDone }: { user: User | null; onClose: () => void; onDone: () => void }) {
+  const [pw, setPw] = useState('');
+  const [pin, setPin] = useState('');
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (user) { setPw(tempPassword()); setPin(''); setError(''); setSaved(null); }
+  }, [user]);
+  async function save() {
+    setBusy(true);
+    setError('');
+    try {
+      await api.patch(`/users/${user!.id}`, { password: pw, pin: pin || undefined });
+      setSaved(pw);
+      onDone();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Modal
+      open={!!user}
+      title={`Reset password for ${user?.name ?? ''}`}
+      onClose={onClose}
+      footer={saved ? <Button variant="primary" onClick={onClose}>Done</Button> : <><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" onClick={save} loading={busy} disabled={pw.length < 8}>Set temporary password</Button></>}
+    >
+      {saved ? (
+        <div className="space-y-3">
+          <Alert tone="good">Done. {user?.name} is signed out everywhere.</Alert>
+          <p>Give them this temporary password. They will be asked to choose their own when they sign in.</p>
+          <div className="flex items-center gap-2">
+            <span className="code flex-1 rounded-ctl border border-line bg-canvas px-4 py-3 text-xl font-bold tracking-wider">{saved}</span>
+            <Button onClick={() => navigator.clipboard?.writeText(saved)}>Copy</Button>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <Alert>{error}</Alert>
+          <Field label="Temporary password" hint="At least 8 characters">
+            <div className="flex gap-2">
+              <Input value={pw} onChange={(e) => setPw(e.target.value)} className="code" autoComplete="off" />
+              <Button onClick={() => setPw(tempPassword())}>New</Button>
+            </div>
+          </Field>
+          <Field label="New quick-switch PIN (optional)" hint="Leave empty to keep their PIN">
+            <Input inputMode="numeric" maxLength={6} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} />
+          </Field>
+        </div>
+      )}
+    </Modal>
   );
 }
 

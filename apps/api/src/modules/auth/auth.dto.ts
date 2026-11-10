@@ -39,3 +39,13 @@ export class ChangePasswordDto {
   @IsString() currentPassword: string;
   @IsString() @MinLength(8) newPassword: string;
 }
+
+export class ForgotPasswordDto {
+  @IsEmail() email: string;
+}
+
+export class ResetPasswordDto {
+  @IsEmail() email: string;
+  @Matches(/^\d{6}$/, { message: 'code must be the 6 digits from the SMS' }) code: string;
+  @IsString() @MinLength(8) newPassword: string;
+}

@@ -12,6 +12,8 @@ export interface AuthUser {
   maxDiscountBp: number;
   features: string[];
   tenantStatus: string;
+  /** Signed in with a temporary password: only changing it is allowed */
+  mustChangePassword?: boolean;
 }
 
 export function hasPermission(user: AuthUser, permission: string): boolean {

@@ -306,15 +306,34 @@ model User {
   pinHash      String?
   isActive     Boolean        @default(true)
   isTechnician Boolean        @default(false)
+  /// Set when an owner/manager gives the user a temporary password
+  mustChangePassword Boolean  @default(false)
   lastLoginAt  DateTime?
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
 
   branches      UserBranch[]
   refreshTokens RefreshToken[]
+  passwordResets PasswordReset[]
 
   @@index([tenantId])
   @@map("users")
+}
+
+/// One-time 6-digit code sent by SMS for "forgot password". Only a hash is stored.
+model PasswordReset {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash  String
+  attempts  Int       @default(0)
+  expiresAt DateTime
+  usedAt    DateTime?
+  ip        String?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  @@map("password_resets")
 }
 
 model UserBranch {

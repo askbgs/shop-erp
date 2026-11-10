@@ -10,7 +10,7 @@ import {
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { AuthUser } from './auth-user';
-import { FEATURE_KEY, IS_PUBLIC, PERMISSIONS_KEY } from './decorators';
+import { ALLOW_TEMP_PASSWORD, FEATURE_KEY, IS_PUBLIC, PERMISSIONS_KEY } from './decorators';
 
 /** Global guard: verifies the Bearer access token unless the route is @Public(). */
 @Injectable()
@@ -50,6 +50,10 @@ export class AccessGuard implements CanActivate {
     const req = ctx.switchToHttp().getRequest();
     const user: AuthUser | undefined = req.user;
     if (!user) return true; // non-JWT routes (e.g. admin API key) handle their own auth
+
+    if (user.mustChangePassword && !this.reflector.getAllAndOverride<boolean>(ALLOW_TEMP_PASSWORD, [ctx.getHandler(), ctx.getClass()])) {
+      throw new ForbiddenException('Choose a new password before continuing');
+    }
 
     if (user.tenantStatus === 'SUSPENDED' && req.method !== 'GET') {
       throw new HttpException('Subscription suspended: the account is read-only until payment is received', HttpStatus.PAYMENT_REQUIRED);

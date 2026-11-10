@@ -71,6 +71,13 @@ The browser shrinks each photo to at most 1200 px (WebP) before upload, and the 
 file type. Photos are stored in Cloudflare R2 when `R2_*` is set, otherwise in the database, and are
 always served through `/api/v1/files/:id` to signed-in staff of the same shop.
 
+**Passwords.** Staff who forget their password use *Forgot password?* on the sign-in page: a
+6-digit code is sent by SMS to the mobile on their account (15 minutes, 5 tries, one use; the code
+is never stored in the message log). Owners and managers can also set a temporary password in
+Settings, under Staff. A temporary password, including the one given to new staff, only lets the
+person choose their own; every other action is blocked until they do. Only an Owner can reset an
+Owner's password or make someone an Owner. Every reset signs the person out on all devices.
+
 **Sign-in carousel.** The login and sign-up pages are split screens: the form on one side and a
 carousel of four illustrated slides on the other (a compact version shows on phones). The slides
 are SVG drawings in `apps/web/src/components/auth-illustrations.tsx`. To use your own photos,
@@ -85,7 +92,8 @@ Run the tests:
 
 ```bash
 npm test                                     # unit tests (money/VAT, IMEI, repair workflow, dates)
-npm run smoke                                # 101 end-to-end checks against the running API
+npm run smoke                                # 120 end-to-end checks against the running API
+                                             # (SMOKE_API_LOG=<api log file> also tests the SMS reset code)
 ```
 
 The smoke test registers a fresh demo shop each run and prints its login at the end.
@@ -139,7 +147,7 @@ changes plans and status, raises monthly invoices and marks them paid, which rea
 
 | Area | Endpoints |
 | --- | --- |
-| Auth | `POST auth/register`, `auth/login`, `auth/refresh`, `auth/logout`, `auth/pin-switch`; `GET auth/me`, `auth/sessions` |
+| Auth | `POST auth/register`, `auth/login`, `auth/refresh`, `auth/logout`, `auth/pin-switch`, `auth/change-password`, `auth/forgot-password`, `auth/reset-password`; `GET auth/me`, `auth/sessions` |
 | Tenant | `GET/PATCH tenant`, `tenant/settings`; `GET tenant/subscription`, `tenant/districts` |
 | Branches | `GET/POST branches`, `PATCH branches/:id`, `PATCH branches/:id/number-series` |
 | Users & roles | `GET/POST users`, `PATCH users/:id`, `GET users/technicians`; `GET/POST roles`, `PATCH roles/:id`, `GET roles/permissions` |

@@ -54,6 +54,34 @@ export class NotificationsService {
       this.logger.error(`Could not queue ${input.event} notification: ${(e as Error).message}`);
     }
   }
+
+  /**
+   * System message that does not use the shop's templates (e.g. a password reset code).
+   * The real text travels only in the short-lived queue job; the log keeps logBody.
+   */
+  async sendDirect(m: DirectMessage): Promise<void> {
+    try {
+      const log = await this.prisma.notificationLog.create({
+        data: { tenantId: m.tenantId, event: m.event, channel: m.channel, to: m.to, body: m.logBody, refType: m.refType, refId: m.refId },
+      });
+      await this.queue.add('send', { logId: log.id, body: m.body }, { attempts: 3, backoff: { type: 'exponential', delay: 10_000 }, removeOnComplete: true, removeOnFail: true });
+    } catch (e) {
+      this.logger.error(`Could not queue ${m.event} message: ${(e as Error).message}`);
+    }
+  }
+}
+
+export interface DirectMessage {
+  tenantId: string;
+  event: string;
+  channel: 'SMS' | 'WHATSAPP';
+  to: string;
+  /** The text that is sent */
+  body: string;
+  /** What is stored in the log instead, e.g. with a one-time code masked out */
+  logBody: string;
+  refType?: string;
+  refId?: string;
 }
 
 @Processor(NOTIFICATION_QUEUE)
@@ -64,13 +92,14 @@ export class NotificationsProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job<{ logId: string }>): Promise<void> {
+  async process(job: Job<{ logId: string; body?: string }>): Promise<void> {
     const log = await this.prisma.notificationLog.findUnique({ where: { id: job.data.logId } });
     if (!log || log.status === 'SENT') return;
     await this.prisma.notificationLog.update({ where: { id: log.id }, data: { attempts: { increment: 1 } } });
+    const text = job.data.body ?? log.body;
 
     if (this.config.get('NOTIFICATIONS_DRIVER') === 'log') {
-      this.logger.log(`[${log.channel} → ${log.to}] ${log.body}`);
+      this.logger.log(`[${log.channel} → ${log.to}] ${text}`);
       await this.prisma.notificationLog.update({ where: { id: log.id }, data: { status: 'SENT', sentAt: new Date() } });
       return;
     }
@@ -91,7 +120,7 @@ export class NotificationsProcessor extends WorkerHost {
       const res = await fetch(target.url, {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...(target.token ? { authorization: `Bearer ${target.token}` } : {}) },
-        body: JSON.stringify({ to: log.to, message: log.body, channel: log.channel, event: log.event, tenantId: log.tenantId, logId: log.id }),
+        body: JSON.stringify({ to: log.to, message: text, channel: log.channel, event: log.event, tenantId: log.tenantId, logId: log.id }),
         signal: AbortSignal.timeout(15_000),
       });
       if (!res.ok) throw new Error(`Provider answered ${res.status}`);

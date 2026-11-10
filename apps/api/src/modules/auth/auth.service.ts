@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { AuthUser } from '../../common/auth-user';
+import { randomInt, timingSafeEqual } from 'crypto';
 import { randomToken, sha256 } from '../../common/crypto';
 import { addDays } from '../../common/dates';
 import { DEFAULT_PLANS, DEFAULT_ROLES } from '../../common/permissions';
@@ -10,10 +11,13 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../core/audit.service';
 import { NumberSeriesService } from '../core/number-series.service';
 import { DEFAULT_TEMPLATES } from '../notifications/default-templates';
+import { NotificationsService } from '../notifications/notifications.service';
 import { RegisterDto } from './auth.dto';
 
 // Real hash used when the email is unknown, so response time does not reveal which accounts exist.
 const DUMMY_HASH = bcrypt.hashSync('not-a-real-password', 12);
+const RESET_CODE_MINUTES = 15;
+const RESET_MAX_ATTEMPTS = 5;
 
 export interface TokenPair {
   accessToken: string;
@@ -34,6 +38,7 @@ export class AuthService {
     private readonly config: ConfigService,
     private readonly numbers: NumberSeriesService,
     private readonly audit: AuditService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /** Self sign-up: creates the tenant, settings, roles, first branch, owner and a trial subscription. */
@@ -141,19 +146,70 @@ export class AuthService {
     return this.issueTokens(user.id, meta);
   }
 
-  async changePassword(user: AuthUser, currentPassword: string, newPassword: string) {
+  /** Signed-in user changes their own password. Other sessions are signed out; this one gets fresh tokens. */
+  async changePassword(user: AuthUser, currentPassword: string, newPassword: string, meta: SessionMeta): Promise<TokenPair> {
     const u = await this.prisma.user.findUniqueOrThrow({ where: { id: user.userId } });
     if (!(await bcrypt.compare(currentPassword, u.passwordHash))) throw new BadRequestException('Current password is wrong');
-    await this.prisma.user.update({ where: { id: u.id }, data: { passwordHash: await bcrypt.hash(newPassword, 12) } });
+    if (await bcrypt.compare(newPassword, u.passwordHash)) throw new BadRequestException('Choose a password different from the current one');
+    await this.prisma.user.update({ where: { id: u.id }, data: { passwordHash: await bcrypt.hash(newPassword, 12), mustChangePassword: false } });
     await this.prisma.refreshToken.updateMany({ where: { userId: u.id, revokedAt: null }, data: { revokedAt: new Date() } });
-    await this.audit.log({ tenantId: u.tenantId, userId: u.id, action: 'auth.password_change', entity: 'User', entityId: u.id });
+    await this.audit.log({ tenantId: u.tenantId, userId: u.id, action: 'auth.password_change', entity: 'User', entityId: u.id, ip: meta.ip });
+    return this.issueTokens(u.id, meta);
+  }
+
+  /**
+   * "Forgot password": sends a 6-digit code by SMS to the mobile on the account.
+   * Always answers the same way, so the page cannot be used to find out which emails have accounts.
+   */
+  async forgotPassword(emailRaw: string, meta: SessionMeta): Promise<void> {
+    const user = await this.prisma.user.findUnique({ where: { email: emailRaw.toLowerCase() } });
+    if (!user || !user.isActive || !user.phone) return;
+    // At most 3 codes per hour per account, so nobody can flood a staff member's phone.
+    const recent = await this.prisma.passwordReset.count({ where: { userId: user.id, createdAt: { gt: new Date(Date.now() - 3600_000) } } });
+    if (recent >= 3) return;
+    await this.prisma.passwordReset.updateMany({ where: { userId: user.id, usedAt: null }, data: { usedAt: new Date() } }); // older codes stop working
+    const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+    await this.prisma.passwordReset.create({
+      data: { userId: user.id, codeHash: sha256(`${user.id}:${code}`), expiresAt: new Date(Date.now() + RESET_CODE_MINUTES * 60_000), ip: meta.ip },
+    });
+    await this.audit.log({ tenantId: user.tenantId, userId: user.id, action: 'auth.password_reset_requested', entity: 'User', entityId: user.id, ip: meta.ip });
+    const tenant = await this.prisma.tenant.findUnique({ where: { id: user.tenantId }, select: { name: true } });
+    const text = (c: string) => `${tenant?.name ?? 'Shop ERP'}: your password reset code is ${c}. It expires in ${RESET_CODE_MINUTES} minutes. Do not share it with anyone.`;
+    await this.notifications.sendDirect({
+      tenantId: user.tenantId, event: 'PASSWORD_RESET', channel: 'SMS', to: user.phone, body: text(code), logBody: text('••••••'), refType: 'User', refId: user.id,
+    });
+  }
+
+  /** Checks the SMS code (5 tries per code, 15 minutes), sets the new password and signs out every session. */
+  async resetPassword(emailRaw: string, code: string, newPassword: string, meta: SessionMeta): Promise<void> {
+    const fail = () => new BadRequestException('That code is wrong or has expired. Request a new code.');
+    const user = await this.prisma.user.findUnique({ where: { email: emailRaw.toLowerCase() } });
+    if (!user || !user.isActive) throw fail();
+    const reset = await this.prisma.passwordReset.findFirst({ where: { userId: user.id, usedAt: null }, orderBy: { createdAt: 'desc' } });
+    if (!reset || reset.expiresAt < new Date() || reset.attempts >= RESET_MAX_ATTEMPTS) throw fail();
+
+    const given = Buffer.from(sha256(`${user.id}:${code}`));
+    if (!timingSafeEqual(given, Buffer.from(reset.codeHash))) {
+      const tries = await this.prisma.passwordReset.update({ where: { id: reset.id }, data: { attempts: { increment: 1 } } });
+      if (tries.attempts >= RESET_MAX_ATTEMPTS) await this.prisma.passwordReset.update({ where: { id: reset.id }, data: { usedAt: new Date() } });
+      throw fail();
+    }
+
+    await this.prisma.tx(async (tx) => {
+      // Marking it used first means two parallel requests cannot both use the same code.
+      const claimed = await tx.passwordReset.updateMany({ where: { id: reset.id, usedAt: null }, data: { usedAt: new Date() } });
+      if (claimed.count !== 1) throw fail();
+      await tx.user.update({ where: { id: user.id }, data: { passwordHash: await bcrypt.hash(newPassword, 12), mustChangePassword: false } });
+      await tx.refreshToken.updateMany({ where: { userId: user.id, revokedAt: null }, data: { revokedAt: new Date() } });
+      await this.audit.log({ tenantId: user.tenantId, userId: user.id, action: 'auth.password_reset', entity: 'User', entityId: user.id, ip: meta.ip }, tx);
+    });
   }
 
   async me(user: AuthUser) {
     const u = await this.prisma.user.findUniqueOrThrow({
       where: { id: user.userId },
       select: {
-        id: true, name: true, email: true, phone: true, isTechnician: true,
+        id: true, name: true, email: true, phone: true, isTechnician: true, mustChangePassword: true,
         role: { select: { id: true, name: true } },
         tenant: { select: { id: true, name: true, businessType: true, status: true, trialEndsAt: true } },
         branches: { select: { branch: { select: { id: true, name: true, code: true } } } },
@@ -202,6 +258,7 @@ export class AuthService {
       maxDiscountBp: u.role.maxDiscountBp,
       features: u.tenant.subscription?.plan.features ?? [],
       tenantStatus,
+      mustChangePassword: u.mustChangePassword,
     };
   }
 
